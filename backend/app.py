@@ -238,6 +238,20 @@ def health():
     return {"ok": True, "service": "market-lens"}
 
 
+@app.get("/api/_diag")
+def _diag(symbol: str = "NVDA"):
+    """TEMP diagnostic: confirms the news key reached the process and shows the exact
+    reason news_sentiment returns (no secrets leaked — only a bool + reason)."""
+    import os as _os
+    key = _os.environ.get("ALPHAVANTAGE_API_KEY", "").strip()
+    out = {"av_key_present": bool(key), "av_key_len": len(key)}
+    try:
+        out["news"] = J.news_sentiment(symbol)
+    except Exception as e:  # noqa: BLE001
+        out["news"] = {"have": False, "reason": "exception", "detail": str(e)}
+    return out
+
+
 @app.get("/api/read")
 def read(ticker: str, market: str = ""):
     ticker = (ticker or "").strip()
