@@ -12,11 +12,13 @@ Educational only — never buy/sell advice.
 
 from __future__ import annotations
 
+import base64
 import os
+import secrets
 import time
 
-from fastapi import FastAPI
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from backend import jlaw_data_core as J
@@ -27,6 +29,36 @@ HERE = os.path.dirname(__file__)
 FRONTEND = os.path.join(HERE, "..", "frontend")
 
 app = FastAPI(title="Market Lens")
+
+
+@app.middleware("http")
+async def _basic_auth(request: Request, call_next):
+    """Optional site-wide login gate (HTTP Basic Auth).
+
+    When BOTH ``APP_USERNAME`` and ``APP_PASSWORD`` are set in the environment, every
+    request except the health check must carry matching credentials — otherwise the
+    browser is challenged with a username/password popup. When either var is unset
+    (e.g. local dev) the site is fully open. To CHANGE the credentials at any time,
+    edit those two env vars on the host (Render dashboard) and redeploy; users are then
+    re-prompted. Served only over HTTPS on Render, so credentials are encrypted in
+    transit. ``compare_digest`` avoids timing-based guessing."""
+    user = os.environ.get("APP_USERNAME", "").strip()
+    pw = os.environ.get("APP_PASSWORD", "").strip()
+    if user and pw and request.url.path != "/api/health":
+        ok = False
+        hdr = request.headers.get("Authorization", "")
+        if hdr.startswith("Basic "):
+            try:
+                raw = base64.b64decode(hdr[6:]).decode("utf-8")
+                u, _, p = raw.partition(":")
+                ok = (secrets.compare_digest(u, user)
+                      and secrets.compare_digest(p, pw))
+            except Exception:  # noqa: BLE001  malformed header -> re-challenge
+                ok = False
+        if not ok:
+            return Response(status_code=401, content="Authentication required.",
+                            headers={"WWW-Authenticate": 'Basic realm="Market Lens"'})
+    return await call_next(request)
 
 # Markets the app actually supports (scan profiles + suffix handling exist for these).
 _MARKETS = {"US", "IN", "UK"}
