@@ -1,0 +1,15 @@
+# Render Blueprint — deploy with: New > Blueprint, point at this repo.
+# Free tier works for a handful of users (sleeps after ~15 min idle; first hit
+# cold-starts ~30-60s). Bump `plan` to starter (~$7/mo) to keep it always-on.
+services:
+  - type: web
+    name: market-lens
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements-prod.txt
+    # SINGLE worker — the small daily cache lives in-process.
+    startCommand: uvicorn backend.app:app --host 0.0.0.0 --port $PORT --workers 1
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.6"
