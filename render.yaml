@@ -3,7 +3,7 @@
 # cold-starts ~30-60s). Bump `plan` to starter (~$7/mo) to keep it always-on.
 services:
   - type: web
-    name: market-lens
+    name: global-market-lens
     runtime: python
     plan: free
     buildCommand: pip install -r requirements-prod.txt
