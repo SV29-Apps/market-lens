@@ -249,6 +249,18 @@ def _diag(symbol: str = "NVDA"):
         out["news"] = J.news_sentiment(symbol)
     except Exception as e:  # noqa: BLE001
         out["news"] = {"have": False, "reason": "exception", "detail": str(e)}
+    # Raw AV probe from THIS server's IP — surfaces the actual Note/Information text.
+    try:
+        import urllib.parse as _up, urllib.request as _ur, json as _json
+        q = _up.urlencode({"function": "NEWS_SENTIMENT", "tickers": symbol,
+                           "limit": 5, "apikey": key})
+        with _ur.urlopen(f"https://www.alphavantage.co/query?{q}", timeout=20) as r:
+            raw = _json.loads(r.read().decode())
+        out["av_raw_keys"] = list(raw.keys())
+        out["av_msg"] = {k: raw[k] for k in ("Information", "Note", "Error Message") if k in raw}
+        out["av_feed_n"] = len(raw.get("feed", []) or [])
+    except Exception as e:  # noqa: BLE001
+        out["av_probe_error"] = str(e)
     return out
 
 
