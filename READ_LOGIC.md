@@ -8,7 +8,16 @@ Keep this in sync with `backend/plain_read.py` — if you change the code, updat
 ## The verdict (green / amber / red)
 
 Computed from the engine's numbers (relative strength, moving averages, distance
-from the 52-week high, market regime):
+from the 52-week high, market regime).
+
+**Shape of the code (matrix refactor, 2026-07-11 — same rules, safer structure):** the
+verdict is a **2-axis matrix** in `plain_read._CELLS`. Axis 1 = **leadership tier**
+(weak / leader / emerging / mixed). Axis 2 = **pullback health** (deep_fade / sliding /
+stretched / resting). One cell = one complete package — tag, headline, paragraph, action
+box and chart buy-line are built together, so a "wait" headline can never sit above a
+"buy now" box. Verified behaviour-identical on the refactor day: 0 diffs across a
+21-name regression, 17/17 unit tests. To change a rule: edit a cell, or move an axis
+boundary — don't add an `elif`.
 
 - **Buy-ready (green)** — a leader (beating the market over 3 & 6 months, above its
   200-day) that is **resting at a calmer spot** (not stretched, not near its high,

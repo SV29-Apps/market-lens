@@ -126,102 +126,60 @@ def build_plain_read(bundle: dict, news: dict | None = None) -> dict:
     # gives to a leader whose caution is really about a deep, RS-losing correction.)
     deep_fade = bool(rs_falling and not above20 and (pct_from_high or 0) < -18)
 
-    # --------------------------------------------------------------- classify
-    buy_level = None   # the price level the detail "buy it if…" line refers to
+    # --------------------------------------------------------------- classify (MATRIX)
+    # The verdict is a 2-AXIS MATRIX (refactor 2026-07-11 — same rules, safer shape):
+    #   AXIS 1 — how strong is the stock (leadership tier), strongest signal first:
+    #     weak     — below its 20 & 50-day and losing to the market (JLaw: relative
+    #                weakness is the mirror of leadership)
+    #     leader   — beating the market over 3 & 6 months, above its 200-day
+    #     emerging — RS line turning up + reclaiming its trend (Stage 1->2), not yet
+    #                a proven leader
+    #     mixed    — none of the above: no edge, point the user at stronger names
+    #   AXIS 2 — what price is doing right now (pullback health), worst state first:
+    #     deep_fade — dropped >18% from its high, below the 20-day, RS falling
+    #     sliding   — below the 20-day with RS falling (still going down — a bounce
+    #                 day or being near its high must NOT override this)
+    #     stretched — extended (>4 ATRs above the 50-day), near its 1-yr high, or
+    #                 just popped >4% today (JLaw: never chase)
+    #     resting   — calm: the low-risk spot JLaw actually buys
+    # ONE cell = ONE complete package (tag + headline + paragraph + action + chart buy
+    # line), built together in _CELLS below — so a "wait" headline can never sit above
+    # a "buy now" action box. Future rule changes = edit a cell or move a boundary,
+    # not a new elif whose position silently outranks the others.
     if weak_now:
-        if above200:
-            tag, color = "weak", "amber"
-            headline = "Getting weaker — not a good buy"
-            subline = "It was strong before. Now it is going down."
-        else:
-            tag, color = "avoid", "red"
-            headline = "Weak — best to avoid"
-            subline = "It is falling and lagging the market."
-        paragraph = _para_weak(name, stock_6m, ex_1m, regime)
-        action = _exit_action(swing_low, currency)
-
+        tier = "weak"
     elif strong_rs and above200:
-        if deep_fade:
-            tag, color = "wait", "amber"
-            headline = "Pulled back hard — let it steady first"
-            subline = "A real leader, but it has dropped a lot and is losing its lead. Wait for it to turn back up."
-            paragraph = _para_broke(name, stock_6m, pct_from_high, regime)
-            buy_level = None
-            action = _steady_action(price, swing_low, currency)
-        elif not above20 and rs_falling:
-            # A leader that is still SLIDING below its short-term trend (below the 20-day) with
-            # its RS line fading — not a calm, "resting" pullback yet, so not a buy-NOW. JLaw:
-            # buy the dip when it STEADIES / reclaims, don't catch it mid-fall. (Milder cousin of
-            # deep_fade — the drawdown isn't deep, but it hasn't stopped going down.)
-            # Checked BEFORE the don't-chase branch: a one-day +4% bounce (just_popped) or
-            # being near its high must NOT flip a still-sliding leader back to "buy the dip".
-            tag, color = "wait", "amber"
-            headline = "Pulling back — wait for it to steady"
-            subline = "A leader, but it's still sliding below its short-term line. Let it settle and turn back up first."
-            paragraph = _para_settle(name, stock_6m, regime)
-            buy_level = None
-            action = _steady_action(price, swing_low, currency)
-        elif extended or near_high or just_popped:
-            tag, color = "wait", "amber"
-            headline = "Strong — but don't chase it here"
-            subline = "A real leader, but it has run up. Better to wait."
-            paragraph = _para_wait(name, stock_6m, pct_1d, near_high, extended, regime)
-            # the dip-to-buy level must sit BELOW the current price — the nearest
-            # support beneath it (20-day, else 50-day, else 10-day, else ~3% down).
-            # Prevents nonsense like "wait for a dip to 282" when price is already 278.
-            dip = (ma20 if (ma20 and ma20 < price) else
-                   ma50v if (ma50v and ma50v < price) else
-                   ma10 if (ma10 and ma10 < price) else
-                   round(price * 0.97, 2))
-            buy_level = dip
-            action = _buy_dip_action(dip, swing_low, currency)
-        else:
-            tag, color = "buy", "green"
-            headline = "Looks buyable"
-            subline = "A leader, resting at a calmer spot."
-            paragraph = _para_buy(name, stock_6m, regime)
-            buy_level = price
-            action = _buy_now_action(price, swing_low, currency)
-
+        tier = "leader"
     elif rs_rising and (
             (above200 and ((ex_1m or 0) > 0 or (ex_3m or 0) > 0))
             or (above50 and above20)):
-        # EMERGING / gaining strength (JLaw's "early leader / just turning up"): the RS
-        # line is turning UP and the stock is reclaiming its trend — but it is NOT yet an
-        # established 3-&-6-month leader. A real move, but earlier-stage and higher risk.
-        # Two ways in: (a) an intact long uptrend (above the 200-day) that's turning up, or
-        # (b) an EARLY REPAIR that has reclaimed BOTH its 20- and 50-day lines with RS
-        # rising even while still below the 200-day (Stage 1->2 turnaround). This is the
-        # read that used to wrongly land on "not a clear leader" for fresh momentum /
-        # turnaround names (APP, NOW, FIG, HOOD, etc.) that just reclaimed their trend.
-        if extended or near_high or just_popped:
-            tag, color = "wait", "amber"
-            headline = "Gaining strength — but don't chase the jump"
-            subline = "Turning up and beating the market lately, but it just ran. Wait for a pullback."
-            paragraph = _para_emerging(name, stock_6m, ex_1m, regime, chased=True)
-            dip = (ma20 if (ma20 and ma20 < price) else
-                   ma50v if (ma50v and ma50v < price) else
-                   ma10 if (ma10 and ma10 < price) else
-                   round(price * 0.97, 2))
-            buy_level = dip
-            action = _buy_dip_action(dip, swing_low, currency)
-        else:
-            tag, color = "emerging", "amber"
-            headline = "Early — just turning up"
-            subline = "Reclaiming its trend and starting to beat the market. Early-stage, so higher risk."
-            paragraph = _para_emerging(name, stock_6m, ex_1m, regime, chased=False)
-            buy_level = price
-            action = _emerging_action(price, swing_low, currency)
-
+        # Two ways into "emerging": (a) an intact long uptrend (above the 200-day)
+        # that's turning up and beating the market lately; or (b) an EARLY REPAIR that
+        # reclaimed BOTH its 20- and 50-day lines with RS rising even while still below
+        # the 200-day. Catches fresh-momentum / turnaround names (APP, NOW, FIG, HOOD)
+        # that used to land on "not a clear leader".
+        tier = "emerging"
     else:
-        tag, color = "wait", "amber"
-        headline = "Not a clear leader right now"
-        subline = "Mixed signals. There are stronger names."
-        paragraph = _para_mixed(name, regime)
-        action = {"type": "none",
-                  "rows": [{"icon": "minus", "color": "muted",
-                            "text": "Nothing to do — there are stronger stocks to look at."}],
-                  "note": ""}
+        tier = "mixed"
+
+    if deep_fade:
+        phase = "deep_fade"
+    elif not above20 and rs_falling:
+        phase = "sliding"
+    elif extended or near_high or just_popped:
+        phase = "stretched"
+    else:
+        phase = "resting"
+
+    ctx = {"name": name, "price": price, "currency": currency, "regime": regime,
+           "stock_6m": stock_6m, "ex_1m": ex_1m, "pct_1d": pct_1d,
+           "near_high": near_high, "extended": extended, "above200": above200,
+           "pct_from_high": pct_from_high, "swing_low": swing_low,
+           "ma10": ma10, "ma20": ma20, "ma50": ma50v}
+    cell = _CELLS[(tier, phase)](ctx)
+    tag, color = cell["tag"], cell["color"]
+    headline, subline = cell["headline"], cell["subline"]
+    paragraph, buy_level, action = cell["paragraph"], cell["buy_level"], cell["action"]
 
     # MARKET GATE — in a Risk-Off market a fresh buy is a bad bet even on a great stock
     # (JLaw: don't fight the market). Downgrade ANY buy-now — established leader OR
@@ -271,6 +229,121 @@ def build_plain_read(bundle: dict, news: dict | None = None) -> dict:
         "signals": signals,
         "lines": {"swing_high": swing_high, "swing_low": swing_low, "buy": buy_level},
     }
+
+
+# --------------------------------------------------------------------------- the matrix
+def _dip_below(price, ma10, ma20, ma50):
+    """The dip-to-buy level must sit BELOW the current price — the nearest support
+    beneath it (20-day, else 50-day, else 10-day, else ~3% down). Prevents nonsense
+    like "wait for a dip to 282" when price is already 278."""
+    return (ma20 if (ma20 and ma20 < price) else
+            ma50 if (ma50 and ma50 < price) else
+            ma10 if (ma10 and ma10 < price) else
+            round(price * 0.97, 2))
+
+
+def _cell(tag, color, headline, subline, paragraph, buy_level, action):
+    return {"tag": tag, "color": color, "headline": headline, "subline": subline,
+            "paragraph": paragraph, "buy_level": buy_level, "action": action}
+
+
+def _cell_leader_resting(c):
+    return _cell("buy", "green", "Looks buyable",
+                 "A leader, resting at a calmer spot.",
+                 _para_buy(c["name"], c["stock_6m"], c["regime"]),
+                 c["price"], _buy_now_action(c["price"], c["swing_low"], c["currency"]))
+
+
+def _cell_leader_stretched(c):
+    dip = _dip_below(c["price"], c["ma10"], c["ma20"], c["ma50"])
+    return _cell("wait", "amber", "Strong — but don't chase it here",
+                 "A real leader, but it has run up. Better to wait.",
+                 _para_wait(c["name"], c["stock_6m"], c["pct_1d"], c["near_high"],
+                            c["extended"], c["regime"]),
+                 dip, _buy_dip_action(dip, c["swing_low"], c["currency"]))
+
+
+def _cell_leader_sliding(c):
+    # Still SLIDING below its short-term trend with RS fading — not a calm "resting"
+    # pullback yet, so not a buy-NOW. JLaw: buy the dip when it STEADIES / reclaims,
+    # don't catch it mid-fall. (Milder cousin of deep_fade.)
+    return _cell("wait", "amber", "Pulling back — wait for it to steady",
+                 "A leader, but it's still sliding below its short-term line. Let it settle and turn back up first.",
+                 _para_settle(c["name"], c["stock_6m"], c["regime"]),
+                 None, _steady_action(c["price"], c["swing_low"], c["currency"]))
+
+
+def _cell_leader_deepfade(c):
+    return _cell("wait", "amber", "Pulled back hard — let it steady first",
+                 "A real leader, but it has dropped a lot and is losing its lead. Wait for it to turn back up.",
+                 _para_broke(c["name"], c["stock_6m"], c["pct_from_high"], c["regime"]),
+                 None, _steady_action(c["price"], c["swing_low"], c["currency"]))
+
+
+def _cell_emerging_starter(c):
+    return _cell("emerging", "amber", "Early — just turning up",
+                 "Reclaiming its trend and starting to beat the market. Early-stage, so higher risk.",
+                 _para_emerging(c["name"], c["stock_6m"], c["ex_1m"], c["regime"], chased=False),
+                 c["price"], _emerging_action(c["price"], c["swing_low"], c["currency"]))
+
+
+def _cell_emerging_chased(c):
+    dip = _dip_below(c["price"], c["ma10"], c["ma20"], c["ma50"])
+    return _cell("wait", "amber", "Gaining strength — but don't chase the jump",
+                 "Turning up and beating the market lately, but it just ran. Wait for a pullback.",
+                 _para_emerging(c["name"], c["stock_6m"], c["ex_1m"], c["regime"], chased=True),
+                 dip, _buy_dip_action(dip, c["swing_low"], c["currency"]))
+
+
+def _cell_weak(c):
+    if c["above200"]:
+        tag, color = "weak", "amber"
+        headline = "Getting weaker — not a good buy"
+        subline = "It was strong before. Now it is going down."
+    else:
+        tag, color = "avoid", "red"
+        headline = "Weak — best to avoid"
+        subline = "It is falling and lagging the market."
+    return _cell(tag, color, headline, subline,
+                 _para_weak(c["name"], c["stock_6m"], c["ex_1m"], c["regime"]),
+                 None, _exit_action(c["swing_low"], c["currency"]))
+
+
+def _cell_mixed(c):
+    return _cell("wait", "amber", "Not a clear leader right now",
+                 "Mixed signals. There are stronger names.",
+                 _para_mixed(c["name"], c["regime"]),
+                 None, {"type": "none",
+                        "rows": [{"icon": "minus", "color": "muted",
+                                  "text": "Nothing to do — there are stronger stocks to look at."}],
+                        "note": ""})
+
+
+# The verdict matrix: (tier, phase) -> one complete, internally-consistent package.
+# NOTES on the collapsed rows:
+#  - weak and mixed ignore the phase: a weak name gets the exit line whatever today's
+#    bar did (a bounce in a weak trend is not a setup), and "no edge" needs no nuance.
+#  - emerging × sliding / deep_fade are UNREACHABLE by construction (both phases
+#    require a FALLING RS line; the emerging tier requires a RISING one). They map to
+#    the starter cell so a future loosening of either axis fails safe (amber, small).
+_CELLS = {
+    ("leader", "resting"):     _cell_leader_resting,
+    ("leader", "stretched"):   _cell_leader_stretched,
+    ("leader", "sliding"):     _cell_leader_sliding,
+    ("leader", "deep_fade"):   _cell_leader_deepfade,
+    ("emerging", "resting"):   _cell_emerging_starter,
+    ("emerging", "stretched"): _cell_emerging_chased,
+    ("emerging", "sliding"):   _cell_emerging_starter,
+    ("emerging", "deep_fade"): _cell_emerging_starter,
+    ("weak", "resting"):       _cell_weak,
+    ("weak", "stretched"):     _cell_weak,
+    ("weak", "sliding"):       _cell_weak,
+    ("weak", "deep_fade"):     _cell_weak,
+    ("mixed", "resting"):      _cell_mixed,
+    ("mixed", "stretched"):    _cell_mixed,
+    ("mixed", "sliding"):      _cell_mixed,
+    ("mixed", "deep_fade"):    _cell_mixed,
+}
 
 
 def _supports(price, ma10, ma20, ma50, ma200, swing_low, currency):
