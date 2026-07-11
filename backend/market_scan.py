@@ -18,12 +18,17 @@ from __future__ import annotations
 # buy/wait judgment is NOT applied to the list — it happens when you OPEN a stock.
 #   wk/mo/day  = momentum bars (% moves) for the weekly / monthly / intraday lanes
 #   near_high  = quiet-leader lane: within this % of the 52-week high (making new highs)
-#   floors: price_min, mcap_min, dollar_vol (liquid, real stocks — kills micro-pumps)
+#   floors: price_min, mcap_min, dollar_vol (liquid, real stocks — kills micro-pumps).
+#   dollar_vol is a FULL-DAY turnover floor, enforced in Python on the 10-day AVERAGE
+#   (avg volume × close) — never on the session's running total, which starts near zero
+#   every morning and would thin the lanes early in the day (the Early-tab bug class).
+#   UK NOTE: TradingView quotes LSE in PENCE, so price_min/dollar_vol are in pence
+#   (100 = £1; 200M = £2M/day) and closes are divided by 100 for display.
 # (perf6m kept only for the legacy strongest_list fallback; unused by momentum_list.)
 _SCAN = {
     "US": dict(market="america", exchange="",    cur="$", price_min=15.0,  mcap_min=1_000_000_000,   dollar_vol=50_000_000,  perf6m=10.0, wk=10.0, mo=30.0, day=6.0, near_high=3.0, bench="^GSPC"),
     "IN": dict(market="india",   exchange="NSE", cur="₹", price_min=75.0,  mcap_min=50_000_000_000,  dollar_vol=100_000_000, perf6m=10.0, wk=8.0,  mo=22.0, day=4.0, near_high=3.0, bench="^NSEI"),
-    "UK": dict(market="uk",      exchange="LSE", cur="£", price_min=100.0, mcap_min=500_000_000,     dollar_vol=2_000_000,   perf6m=8.0,  wk=6.0,  mo=18.0, day=3.5, near_high=3.0, bench="^FTSE"),
+    "UK": dict(market="uk",      exchange="LSE", cur="£", price_min=100.0, mcap_min=500_000_000,     dollar_vol=200_000_000, perf6m=8.0,  wk=6.0,  mo=18.0, day=3.5, near_high=3.0, bench="^FTSE"),
 }
 
 # TradingView files semiconductor-EQUIPMENT makers under "Industrial Machinery"
@@ -164,8 +169,8 @@ def snapshot(ticker: str, market_key: str) -> dict | None:
 # momentum lanes, in display priority order + a plain "why" phrase per lane.
 _LANE_ORDER = ["day", "week", "month", "newhigh", "early"]
 _LANE_WHY = {"day": "jumped today", "week": "up big this week",
-             "month": "up big this month", "newhigh": "at new highs",
-             "early": "early — just reclaiming its trend"}
+             "month": "up big this month", "newhigh": "at new highs, beating the market",
+             "early": "early turn — reclaimed its trend, RS rising"}
 
 
 def _num(v):
@@ -201,10 +206,13 @@ def momentum_list(market_key: str, cap: int = 400) -> list[dict]:
     here (that happens when the stock is opened). [] on failure so the caller falls back.
 
     Lanes (all also require the base floors: real liquid stock, price/mcap/turnover):
-      day     — up > day% today, above the 200-day
+      day     — up > day% today AND at least flat on the month, above the 200-day
       week    — up > wk% this week, above the 10/20/50/200-day
       month   — up > mo% this month, above the 200-day
       newhigh — above the 10/20/50/200-day AND within near_high% of the 52-week high
+                (+ true-RS vs the index, applied in Python)
+      early   — Stage 1->2 turn: above all MAs, 50>200, turning up but NOT a fast mover,
+                just reclaimed the 50-day, room below highs (details in Python below)
     """
     p = _SCAN.get((market_key or "").strip().upper())
     if not p:
@@ -219,7 +227,10 @@ def momentum_list(market_key: str, cap: int = 400) -> list[dict]:
         col("typespecs").has(["common"]),
         col("close") >= p["price_min"],
         col("market_cap_basic") >= p["mcap_min"],
-        col("Value.Traded") >= p["dollar_vol"],
+        # coarse junk filter only (5% of the floor): Value.Traded is the SESSION'S
+        # RUNNING total, near zero at the open — the real full-day liquidity floor is
+        # enforced in Python below on the 10-day average, which doesn't swing intraday.
+        col("Value.Traded") >= p["dollar_vol"] * 0.05,
     ]
     if p["exchange"]:
         base.append(col("exchange") == p["exchange"])
@@ -227,7 +238,11 @@ def momentum_list(market_key: str, cap: int = 400) -> list[dict]:
     bench = _bench_perf(p.get("bench"))          # market return for the true-RS check
 
     lanes = {
-        "day":   [col("change") > p["day"], col("close") > col("SMA200")],
+        # day lane also requires the MONTH to be at least flat: a one-day jump in a
+        # stock that's DOWN on the month is a bounce, not momentum (2026-07-11 — the
+        # India Fast movers tab was showing -2%/-6%-month names off a single up day).
+        "day":   [col("change") > p["day"], col("close") > col("SMA200"),
+                  col("Perf.1M") >= 0],
         "week":  [col("Perf.W") > p["wk"], col("close") > col("SMA10"),
                   col("close") > col("SMA20"), col("close") > col("SMA50"),
                   col("close") > col("SMA200")],
@@ -236,7 +251,8 @@ def momentum_list(market_key: str, cap: int = 400) -> list[dict]:
         # the index over 3 & 6 months) are applied in Python below.
         "newhigh": [col("close") > col("SMA10"), col("close") > col("SMA20"),
                     col("close") > col("SMA50"), col("close") > col("SMA200")],
-        # early / emerging (JLaw's Stage 1->2 turn): long trend intact + volume building;
+        # early / emerging (JLaw's Stage 1->2 turn): long trend intact, just turning up.
+        # NO volume gate (see NOTE below) — volume RANKS the tab instead (rvol, frontend).
         # "just reclaimed the 50-day (not extended)", "room below highs" and "starting to
         # beat the market" are applied in Python below.
         "early": [col("close") > col("SMA10"), col("close") > col("SMA20"),
@@ -273,6 +289,11 @@ def momentum_list(market_key: str, cap: int = 400) -> list[dict]:
             c = _num(r.get("close")); hi = _num(r.get("price_52_week_high"))
             sma50 = _num(r.get("SMA50"))
             p1 = _num(r.get("Perf.1M")); p3 = _num(r.get("Perf.3M")); p6 = _num(r.get("Perf.6M"))
+            # the REAL liquidity floor: 10-day-average turnover (avg volume × close) —
+            # stable all day, unlike the session's cumulative Value.Traded.
+            avg_vol = _num(r.get("average_volume_10d_calc"))
+            if avg_vol is not None and c and avg_vol * c < p["dollar_vol"]:
+                continue
             # --- per-lane Python gates (what the TradingView query couldn't express) ---
             if lane == "newhigh":
                 if not (c and hi and c >= hi * near_factor):          # near the 52w high
@@ -294,11 +315,14 @@ def momentum_list(market_key: str, cap: int = 400) -> list[dict]:
             d = merged.get(tk)
             if d is None:
                 close = c or 0.0
+                if p["cur"] == "£":
+                    close = close / 100.0        # LSE quotes in pence -> pounds for display
                 d = merged[tk] = {
                     "ticker": tk,
                     "name": str(r.get("description") or tk),
                     "market": market_key.strip().upper(),
                     "price_str": f"{p['cur']}{round(close):,}",
+                    "rvol": _num(r.get("relative_volume_10d_calc")),
                     "sector": friendly_sector(r.get("sector"), r.get("industry"), tk),
                     "raw_sector": str(r.get("sector") or ""),
                     "industry": str(r.get("industry") or ""),

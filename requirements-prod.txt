@@ -1,7 +1,10 @@
 # Runtime dependencies for hosting (slim — the engine fetches Yahoo over urllib,
 # so no yfinance; charts are drawn in the browser, so no matplotlib).
-numpy>=1.26
-pandas>=2.0
-fastapi>=0.110
-uvicorn[standard]>=0.27
-tradingview-screener>=3.1.0   # whole-market "Strong right now" scan
+# Pinned with UPPER bounds (2026-07-11): Render reinstalls on every deploy, and an
+# unbounded ">=" would silently pull a future breaking major while the build stays
+# green (the health check touches no scan code). Versions = tested locally.
+numpy>=2.5,<3
+pandas>=3.0,<4
+fastapi>=0.138,<1
+uvicorn[standard]>=0.49,<1
+tradingview-screener>=3.2,<4   # whole-market "Strong right now" scan

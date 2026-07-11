@@ -103,15 +103,19 @@ def build_plain_read(bundle: dict, news: dict | None = None) -> dict:
     above20 = (v_ma20 or 0) > 0
     above200 = (v_ma200 or 0) > 0
     strong_rs = (ex_3m or 0) > 0 and (ex_6m or 0) > 0           # beating the market 3m & 6m
-    extended = (v_ma50 or 0) > 12                              # >12% above the 50-day = stretched
     near_high = (pct_from_high or -99) > -5                    # within 5% of the 1-year high
     just_popped = pct_1d > 4
     weak_now = (not above20 and not above50) and ((ex_1m or 0) < 0 or rs_falling)
 
-    # "Over-extended" the JLaw way = far above the 50-day in ATR (volatility) terms,
-    # i.e. parabolic — not just a % gap. Matches the "Not over-extended" entry check.
+    # "Extended" the JLaw way = stretched above the 50-day in ATR (volatility) terms,
+    # NOT a flat % (READ_LOGIC: "JLaw measures 'extended' in ATR terms"). ONE graded
+    # scale drives BOTH the verdict and the setup-check dot so they can never
+    # contradict: > 4 ATRs above the 50-day = stretched (don't chase), > 7 = parabolic.
+    # Flat-% fallback only when ATR is unavailable.
     atr14 = _g(f, "daily", "atr14")
-    over_extended = bool(atr14 and ma50v and price and (price - ma50v) / atr14 > 7)
+    atrs_above_50 = ((price - ma50v) / atr14) if (atr14 and ma50v and price) else None
+    extended = (atrs_above_50 > 4) if atrs_above_50 is not None else (v_ma50 or 0) > 12
+    over_extended = atrs_above_50 is not None and atrs_above_50 > 7
 
     # DEEP FADE — a 6-month leader that is pulling back UN-healthily: its relative-strength
     # line has turned DOWN (it's lagging, not leading, during the dip), it's below its
@@ -144,6 +148,19 @@ def build_plain_read(bundle: dict, news: dict | None = None) -> dict:
             paragraph = _para_broke(name, stock_6m, pct_from_high, regime)
             buy_level = None
             action = _steady_action(price, swing_low, currency)
+        elif not above20 and rs_falling:
+            # A leader that is still SLIDING below its short-term trend (below the 20-day) with
+            # its RS line fading — not a calm, "resting" pullback yet, so not a buy-NOW. JLaw:
+            # buy the dip when it STEADIES / reclaims, don't catch it mid-fall. (Milder cousin of
+            # deep_fade — the drawdown isn't deep, but it hasn't stopped going down.)
+            # Checked BEFORE the don't-chase branch: a one-day +4% bounce (just_popped) or
+            # being near its high must NOT flip a still-sliding leader back to "buy the dip".
+            tag, color = "wait", "amber"
+            headline = "Pulling back — wait for it to steady"
+            subline = "A leader, but it's still sliding below its short-term line. Let it settle and turn back up first."
+            paragraph = _para_settle(name, stock_6m, regime)
+            buy_level = None
+            action = _steady_action(price, swing_low, currency)
         elif extended or near_high or just_popped:
             tag, color = "wait", "amber"
             headline = "Strong — but don't chase it here"
@@ -158,17 +175,6 @@ def build_plain_read(bundle: dict, news: dict | None = None) -> dict:
                    round(price * 0.97, 2))
             buy_level = dip
             action = _buy_dip_action(dip, swing_low, currency)
-        elif not above20 and rs_falling:
-            # A leader that is still SLIDING below its short-term trend (below the 20-day) with
-            # its RS line fading — not a calm, "resting" pullback yet, so not a buy-NOW. JLaw:
-            # buy the dip when it STEADIES / reclaims, don't catch it mid-fall. (Milder cousin of
-            # deep_fade — the drawdown isn't deep, but it hasn't stopped going down.)
-            tag, color = "wait", "amber"
-            headline = "Pulling back — wait for it to steady"
-            subline = "A leader, but it's still sliding below its short-term line. Let it settle and turn back up first."
-            paragraph = _para_settle(name, stock_6m, regime)
-            buy_level = None
-            action = _steady_action(price, swing_low, currency)
         else:
             tag, color = "buy", "green"
             headline = "Looks buyable"
@@ -176,10 +182,6 @@ def build_plain_read(bundle: dict, news: dict | None = None) -> dict:
             paragraph = _para_buy(name, stock_6m, regime)
             buy_level = price
             action = _buy_now_action(price, swing_low, currency)
-        if regime == "Risk-Off" and tag == "buy":
-            tag, color = "wait", "amber"
-            headline = "Strong, but the market is weak"
-            subline = "Good stock, risky time. Go slow."
 
     elif rs_rising and (
             (above200 and ((ex_1m or 0) > 0 or (ex_3m or 0) > 0))
@@ -221,6 +223,19 @@ def build_plain_read(bundle: dict, news: dict | None = None) -> dict:
                             "text": "Nothing to do — there are stronger stocks to look at."}],
                   "note": ""}
 
+    # MARKET GATE — in a Risk-Off market a fresh buy is a bad bet even on a great stock
+    # (JLaw: don't fight the market). Downgrade ANY buy-now — established leader OR
+    # emerging starter — to a wait. Headline, paragraph, action box and chart buy-line
+    # all move TOGETHER here (fix 2026-07-11: the old gate rewrote only the headline,
+    # leaving a "good spot to buy" action box under a "go slow" banner).
+    if regime == "Risk-Off" and tag in ("buy", "emerging"):
+        tag, color = "wait", "amber"
+        headline = "Strong, but the market is weak"
+        subline = "Good stock, risky time. Go slow."
+        paragraph = _para_riskoff(name, stock_6m)
+        buy_level = None
+        action = _riskoff_action(swing_low, currency)
+
     # Pull-back zone + stacked supports — for leaders and emerging names (buy / wait /
     # emerging), where a dip to support is a place to act. Weak/avoid get an exit line.
     supports = None
@@ -249,8 +264,8 @@ def build_plain_read(bundle: dict, news: dict | None = None) -> dict:
         "verdict": {"tag": tag, "color": color, "headline": headline, "subline": subline},
         "paragraph": paragraph,
         "action": action,
-        "detail": _detail(currency, tag, over_extended, vol_ratio, rs_rising, ex_1m, ex_6m,
-                          pct_1d, price, swing_high, buy_level, swing_low),
+        "detail": _detail(currency, tag, over_extended, extended, vol_ratio, rs_rising,
+                          ex_1m, ex_6m, pct_1d, price, swing_high, buy_level, swing_low),
         "supports": supports,
         "news": news_lens,
         "signals": signals,
@@ -401,8 +416,8 @@ def _patterns(last_candle, recent_gaps, above50, strong_rs, regime, pct_1d, tag)
             for _, lab, txt in out[:2]] or None
 
 
-def _detail(currency, tag, over_extended, vol_ratio, rs_rising, ex_1m, ex_6m, pct_1d,
-            price, swing_high, buy_level, stop):
+def _detail(currency, tag, over_extended, extended, vol_ratio, rs_rising, ex_1m, ex_6m,
+            pct_1d, price, swing_high, buy_level, stop):
     """The read's inline detail: a target plus three plain 'setup' checks. Each check
     is THREE-STATE — good / watch / bad — not a pass/fail tick, because some factors
     (notably volume) are context-dependent, not simply good or bad.
@@ -416,8 +431,12 @@ def _detail(currency, tag, over_extended, vol_ratio, rs_rising, ex_1m, ex_6m, pc
     quiet = vol_ratio is not None and vol_ratio < 1.0
     up = (pct_1d or 0) > 0
 
+    # Same graded ATR scale as the verdict (4 = stretched, 7 = parabolic), so this dot
+    # can never say "not over-extended" under a "don't chase — it has run up" verdict.
     if over_extended:
         c1 = {"state": "watch", "label": "Over-extended (parabolic) — risky"}
+    elif extended:
+        c1 = {"state": "watch", "label": "Stretched above its average — a dip is safer"}
     else:
         c1 = {"state": "good", "label": "Not over-extended"}
 
@@ -477,7 +496,7 @@ def _detail(currency, tag, over_extended, vol_ratio, rs_rising, ex_1m, ex_6m, pc
             reward_risk = {"ratio": round(ratio, 1), "state": st, "note": note}
         else:
             reward_risk = {"ratio": None, "state": "watch",
-                           "note": "not clear yet — it's near its high, so there's no obvious target above"}
+                           "note": "can't be measured here — it's near its high, so there's no target above to measure against"}
 
     return {"target": target, "checks": [c1, c2, c3], "reward_risk": reward_risk}
 
@@ -489,15 +508,32 @@ def _market_phrase(regime: str) -> str:
             "Risk-Off": "the market overall is weak"}.get(regime, "the market is mixed")
 
 
+def _six_phrase(stock_6m, default: str) -> str:
+    """Sign-aware six-month phrase. A 'leader' is judged on EXCESS return, so in a down
+    market a leader's own 6-month return can be negative — never print 'up about -12%'."""
+    if not stock_6m:
+        return default
+    if stock_6m > 0:
+        return f"up about {_pct(stock_6m)} in six months"
+    return f"down about {_pct(abs(stock_6m))} in six months but holding up better than the market"
+
+
 def _para_buy(name, stock_6m, regime):
-    up = f"up about {_pct(stock_6m)} in six months" if stock_6m else "stronger than the market"
+    up = _six_phrase(stock_6m, "stronger than the market")
     return (f"{name} is one of the stronger stocks around — {up}, ahead of the market, and "
             f"{_market_phrase(regime)}. It has paused and pulled back to a calmer level, "
             f"which is a lower-risk spot to step in.")
 
 
+def _para_riskoff(name, stock_6m):
+    up = _six_phrase(stock_6m, "stronger than most stocks")
+    return (f"{name} is {up} and holding up better than most — but the market overall is "
+            f"weak right now, and most stocks fall when the market falls. Even a strong "
+            f"stock is a risky buy in a weak market. Let the market steady first.")
+
+
 def _para_wait(name, stock_6m, pct_1d, near_high, extended, regime):
-    up = f"up about {_pct(stock_6m)} in six months" if stock_6m else "well ahead of the market"
+    up = _six_phrase(stock_6m, "well ahead of the market")
     why = []
     if pct_1d > 4:
         why.append(f"today it jumped about {_pct(pct_1d)}")
@@ -530,7 +566,7 @@ def _para_broke(name, stock_6m, pct_from_high, regime):
 
 
 def _para_settle(name, stock_6m, regime):
-    up = f"up about {_pct(stock_6m)} in six months" if stock_6m else "a market leader"
+    up = _six_phrase(stock_6m, "a market leader")
     return (f"{name} is {up} and still one of the stronger names — but right now it's drifting "
             f"lower, below its short-term line, and slipping behind the market for the moment. "
             f"That's not a calm, buyable pause yet. Better to wait for it to stop going down and "
@@ -565,6 +601,20 @@ def _emerging_action(price, swing_low, currency):
         note = (f"Keep it tight — safety line {_money(swing_low, currency)} (sell if it ends a day "
                 f"below). Early-stage, so size small; it isn't a confirmed leader yet.")
     return {"type": "buy", "number": _money(price, currency), "rows": rows, "note": note}
+
+
+def _riskoff_action(swing_low, currency):
+    rows = [
+        {"icon": "hand", "color": "amber",
+         "text": "Right now → wait. The market itself is weak — a risky time for new buys."},
+        {"icon": "up", "color": "green",
+         "text": "Market steadies and this stock holds its level → then it's worth a look."},
+    ]
+    note = ""
+    if swing_low:
+        note = (f"Already own it? Your safety line is {_money(swing_low, currency)} — "
+                f"sell if it ends a day below that.")
+    return {"type": "wait", "number": None, "rows": rows, "note": note}
 
 
 def _steady_action(price, swing_low, currency):

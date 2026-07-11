@@ -76,7 +76,7 @@
   .newschk{display:flex;gap:9px;align-items:flex-start;border-radius:var(--radius-sm);
     padding:10px 13px;margin:-4px 0 12px;font-size:13px;line-height:1.55}
   .newschk .nlab{font-weight:600;white-space:nowrap}
-  .charthint{font-size:12px;color:var(--muted);text-align:center;margin:-6px 0 12px}
+  .charthint{font-size:12px;color:var(--ink2);text-align:center;margin:-6px 0 12px}
   .conecap{font-size:12.5px;color:var(--ink);line-height:1.55;background:#F7F8FA;border:1px solid var(--line2);border-radius:var(--radius-sm);padding:10px 13px;margin:0 0 14px}
   .sigbox{border:1px solid var(--line2);border-radius:var(--radius-sm);padding:12px 14px;margin:0 0 14px}
   .sigbox .dlab{margin-bottom:8px}
@@ -224,6 +224,8 @@ function fmtMoney(v, cur){
   if(v==null||isNaN(v)) return "";
   if(cur==="GBp") v=v/100;              // London quotes in pence -> pounds
   const s={USD:"$",INR:"₹",GBp:"£",GBP:"£",EUR:"€"}[cur]||"";
+  // low-priced stocks need decimals — "stop $3" for an actual 3.47 misleads by ~15%
+  if(Math.abs(v) < 10) return s + v.toFixed(2);
   return s + Math.round(v).toLocaleString();
 }
 const _MON=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -234,9 +236,23 @@ document.querySelectorAll("#markets .pill").forEach(b=>{
   if(b.dataset.m===market) b.classList.add("on");
   b.addEventListener("click",()=>{
     document.querySelectorAll("#markets .pill").forEach(x=>x.classList.remove("on"));
-    b.classList.add("on"); market=b.dataset.m; loadTeaser();
+    b.classList.add("on"); market=b.dataset.m;
+    lastStrong = null;      // a cached list from the OLD market must never render under the new one
+    loadTeaser();
   });
 });
+
+// hide market pills the server hasn't enabled (e.g. UK parked for now).
+// Best-effort: if /api/config is unreachable, all pills stay visible.
+fetch("/api/config").then(r=>r.json()).then(cfg=>{
+  const en = cfg && cfg.markets; if(!en || !en.length) return;
+  document.querySelectorAll("#markets .pill").forEach(b=>{
+    if(!en.includes(b.dataset.m)) b.style.display = "none";
+  });
+  if(!en.includes(market)){ market = en[0];
+    document.querySelectorAll("#markets .pill").forEach(x=>x.classList.toggle("on", x.dataset.m===market));
+    loadTeaser(); }
+}).catch(()=>{});
 
 // search
 function doSearch(){ const t=$("#ticker").value.trim(); if(t) openRead(t); }
@@ -246,16 +262,22 @@ $("#seeAll").addEventListener("click", openStrong);
 
 const ICON = {up:"▲", down:"▼", check:"✓", hand:"•", minus:"•"};
 
+let readSeq = 0;   // guards against a SLOW response landing after a newer read was opened
 async function openRead(ticker, mkt){
   if(current!=="read") readBackTo = current;   // remember the screen we came from
+  const seq = ++readSeq;
   show("read");
-  $("#readBody").innerHTML = `<div class="center"><span class="spin"></span> Reading ${esc(ticker)}…</div>`;
+  $("#readBody").innerHTML = `<div class="center"><span class="spin"></span> Reading ${esc(ticker)}…
+    <div class="small muted" style="margin-top:8px">Can take up to a minute if the server was asleep.</div></div>`;
   try{
     const r = await fetch(`/api/read?ticker=${encodeURIComponent(ticker)}&market=${mkt||market}`);
+    if(seq !== readSeq) return;                // a newer read took over — drop this response
+    if(!r.ok){ $("#readBody").innerHTML = `<div class="center">The server is waking up — give it a moment and try again.</div>`; return; }
     const d = await r.json();
+    if(seq !== readSeq) return;
     if(!d.ok){ $("#readBody").innerHTML = `<div class="center">${esc(d.error||"Couldn't read that stock.")}</div>`; return; }
     renderRead(d);
-  }catch(e){ $("#readBody").innerHTML = `<div class="center">Something went wrong. Try again.</div>`; }
+  }catch(e){ if(seq === readSeq) $("#readBody").innerHTML = `<div class="center">Something went wrong. Try again.</div>`; }
 }
 
 function renderRead(d){
@@ -339,7 +361,7 @@ function statsStrip(d){
     return `<span class="statchip"><b>${lab}</b> <span style="color:${c}">${(+v).toFixed(1)}%</span></span>`; };
   const chip=(lab,val)=> (val==null||val==="")?"":`<span class="statchip"><b>${lab}</b> ${esc(String(val))}</span>`;
   const chips = pctChip("Week",s.perf_w)+pctChip("Month",s.perf_m)
-    + chip("P/E", s.pe!=null?(+s.pe).toFixed(1):null) + chip("Wk turnover", s.turnover);
+    + chip("P/E", s.pe!=null?(+s.pe).toFixed(1):null) + chip("Turnover today", s.turnover);
   const sector = s.sector ? `<div class="small muted" style="margin-top:6px">${esc(s.sector)}${s.industry?' › '+esc(s.industry):''}</div>` : "";
   return (chips||sector) ? `<div class="stats">${chips}</div>${sector}` : "";
 }
@@ -462,10 +484,12 @@ function buildChart(d){
 
 async function loadTeaser(){
   const el = $("#teaser");
+  const m = market;   // remember which market this request is for
   el.innerHTML = `<span class="spin"></span> <span class="muted small">Finding today’s movers…</span>`;
   try{
-    const r = await fetch(`/api/strong?market=${market}&n=6`);   // light preview, not the full scan
+    const r = await fetch(`/api/strong?market=${m}&n=6`);   // light preview, not the full scan
     const d = await r.json();
+    if(m !== market) return;   // user switched market while this was loading — drop it
     const all = (d.top||[]).slice(0,3);
     if(!all.length){ el.innerHTML = `<span class="small muted">No clear movers right now.</span>`; return; }
     el.innerHTML = all.map(it=>{
@@ -476,16 +500,20 @@ async function loadTeaser(){
   }catch(e){ el.innerHTML = `<span class="small muted">Couldn’t load movers — tap “see all”.</span>`; }
 }
 
+let strongSeq = 0;   // guards against a SLOW scan landing after a newer one was requested
 async function openStrong(){
   show("strong");
-  $("#strongTitle").textContent = `Where money’s flowing · ${ {US:"United States",IN:"India",UK:"United Kingdom"}[market]||market }`;
+  const seq = ++strongSeq, m = market;
+  lastStrong = null;   // never re-render a previous market's list while this one loads
+  $("#strongTitle").textContent = `Where money’s flowing · ${ {US:"United States",IN:"India",UK:"United Kingdom"}[m]||m }`;
   $("#strongBody").innerHTML = `<div class="center"><span class="spin"></span> Scanning the market for fresh momentum…<div class="small muted" style="margin-top:8px">The first scan each day takes ~15–20 seconds. After that it’s instant.</div></div>`;
   try{
-    const r = await fetch(`/api/strong?market=${market}`);
+    const r = await fetch(`/api/strong?market=${m}`);
     const d = await r.json();
+    if(seq !== strongSeq) return;              // a newer scan took over — drop this response
     if(!d.ok){ $("#strongBody").innerHTML = `<div class="center">Couldn't load the list. Try again.</div>`; return; }
     renderStrong(d);
-  }catch(e){ $("#strongBody").innerHTML = `<div class="center">Something went wrong. Try again.</div>`; }
+  }catch(e){ if(seq === strongSeq) $("#strongBody").innerHTML = `<div class="center">Something went wrong. Try again.</div>`; }
 }
 
 let lastStrong = null;    // the most recent /api/strong response
@@ -494,7 +522,8 @@ let strongView = "fast";  // "fast" | "quiet" | "early" | "sector"
 let strongQuery = "";     // live search filter (ticker or name)
 
 // which momentum lane(s) a name passed, in plain words
-const LANE_TXT = {day:"jumped today", week:"up big this week", month:"up big this month", newhigh:"at new highs"};
+const LANE_TXT = {day:"jumped today", week:"up big this week", month:"up big this month",
+                  newhigh:"at new highs", early:"early turn — RS rising"};
 function whyText(it){
   const parts = (it.lanes||[]).map(l=>LANE_TXT[l]).filter(Boolean);
   let s = parts.slice(0,2).join(" · ") || (it.why||"momentum");
@@ -525,7 +554,10 @@ const FAST_LANES = ["day", "week", "month"];
 function viewItems(d){
   const all = d.top || [];
   if(strongView==="quiet")  return all.filter(it=>(it.lanes||[]).includes("newhigh"));
-  if(strongView==="early")  return all.filter(it=>(it.lanes||[]).includes("early"));
+  if(strongView==="early")  // volume RANKS an early turn (JLaw: quiet accumulation = the
+                            // institutional footprint) — busiest names float to the top.
+    return all.filter(it=>(it.lanes||[]).includes("early"))
+              .sort((a,b)=>(b.rvol||0)-(a.rvol||0));
   if(strongView==="fast")   return all.filter(it=>(it.lanes||[]).some(l=>FAST_LANES.includes(l)));
   return all;   // "sector" — all names, grouped below
 }

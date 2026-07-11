@@ -15,6 +15,11 @@ from the 52-week high, market regime):
   didn't just pop). *JLaw: only buy the strongest names, and only at a low-risk edge.*
 - **Strong, wait (amber)** — a leader, **but** it's stretched, near its 1-year high,
   or just jumped. *JLaw: never chase — wait for a pullback to a low-risk entry.*
+  **"Stretched" is measured in the stock's OWN volatility (2026-07-11): > 4×ATR above
+  the 50-day = stretched, > 7×ATR = parabolic — the same graded scale the setup-check
+  dot uses, so the verdict and the dot can never contradict. (Replaced the old flat
+  ">12% above the 50-day", which JLaw rejects — a volatile stock 13% above its 50-day
+  can be a normal wobble; a quiet stock 8% above can be genuinely stretched.)**
 - **Pulled back hard — let it steady (amber, "wait")** — a 3-&-6-month leader that is
   now pulling back **un-healthily**: its **RS line has turned DOWN** (lagging, not leading,
   during the dip), it's **below its 20-day**, and it's **>18% below its 1-year high**. Not
@@ -52,12 +57,17 @@ from the 52-week high, market regime):
 - **Not a clear leader (amber)** — no fresh strength (RS not turning up, or no recent
   outperformance): genuinely mixed → point the user at stronger names.
 
-In a **Risk-Off** market a buy-ready name is downgraded to "wait" (go slow).
+**Market gate (fixed 2026-07-11):** in a **Risk-Off** market, ANY buy-now — an established
+leader's buy **or** an emerging starter-buy — is downgraded to "wait", and the WHOLE card
+moves together: headline, paragraph, action box and the chart's buy line (the old gate
+rewrote only the headline, leaving a "good spot to buy" box under a "go slow" banner).
 Classify order: weak_now → **established leader** (RS 3m&6m>0 + above 200; within this, in
-order: deep-faded → "pulled back hard"; extended/near-high/just-popped → "strong, don't chase";
-still-sliding below-20-day + falling-RS → "pulling back, wait to steady"; else → "buy") →
-**emerging** (intact-uptrend path *or* early-repair path, see above) → else mixed.
-Emerging/wait get supports + the news lens like a leader.
+order: deep-faded → "pulled back hard"; **still-sliding below-20-day + falling-RS →
+"pulling back, wait to steady"** (checked BEFORE the chase test since 2026-07-11 — a one-day
++4% bounce or being near its high must not flip a still-sliding leader back to "buy the
+dip"); extended/near-high/just-popped → "strong, don't chase"; else → "buy") →
+**emerging** (intact-uptrend path *or* early-repair path, see above) → else mixed →
+then the Risk-Off market gate above. Emerging/wait get supports + the news lens like a leader.
 
 ---
 
@@ -67,8 +77,10 @@ These are shown as coloured dots, **not** ✓/✗ ticks — because some factors
 context-dependent, not simply good or bad. A dot's colour is the signal:
 🟢 supportive · 🟠 watch / neutral · 🔴 warning.
 
-### 1. Over-extension  (ATR / "parabolic")
-- 🟢 **Not over-extended** — price is within ~7×ATR of the 50-day.
+### 1. Over-extension  (ATR — one graded scale, shared with the verdict; 2026-07-11)
+- 🟢 **Not over-extended** — price is within ~4×ATR of the 50-day.
+- 🟠 **Stretched above its average — a dip is safer** — 4–7×ATR above the 50-day
+  (the same threshold that makes the verdict say "don't chase").
 - 🟠 **Over-extended (parabolic) — risky** — more than ~7×ATR above the 50-day.
 - *JLaw measures "extended" in volatility (ATR) terms, not a flat %.* It's a *caution*
   (amber), not a hard negative — strong stocks can stay extended for a while.
@@ -101,14 +113,15 @@ Volume only means something **in the direction of the move**:
 
 ## Reward vs risk  (the "is it worth getting in?" number)
 
-Shown in the read for buy / wait names (skipped for weak/avoid — there's no buy):
+Shown in the read for buy / wait / emerging names (skipped for weak/avoid — there's no buy):
 - **reward** = target (recent high) − entry (the buy zone);
 - **risk** = entry − stop (safety line);
 - **ratio** = reward ÷ risk.
 - 🟢 **≥ 2 : 1** — good (could gain more than you'd risk).
 - 🟠 **1–2 : 1** — modest (reward roughly matches risk).
 - 🔴 **< 1 : 1** — poor (you'd risk more than you could gain).
-- 🟠 **not defined** — near its 1-year high, so there's no clear target above.
+- 🟠 **can't be measured here** — near its 1-year high, so there's no target above to
+  measure against (honest no-number case, 2026-07-11 — matches the old app's behaviour).
 - *JLaw: reward:risk sets your SIZE, not whether to participate — but a poor ratio is a
   strong reason to pass or size tiny. Pulled-back leaders show better ratios than
   extended ones (more room to target, tighter stop). Added 2026-07-01.*
@@ -116,12 +129,18 @@ Shown in the read for buy / wait names (skipped for weak/avoid — there's no bu
 ## The action box (what to do)
 
 - **Buy-ready** → a buy zone around the current price + a safety line (stop) below.
-- **Wait** → a "buy on a dip to ~X" level (nearest support **below** the current price:
-  20-day, else 50-day, else 10-day, else ~3% down) + the safety line.
+- **Wait (don't chase)** → a "buy on a dip to ~X" level (nearest support **below** the
+  current price: 20-day, else 50-day, else 10-day, else ~3% down) + the safety line.
+- **Wait (still sliding / deep fade)** → a no-number "let it steady first, then it's a
+  safer spot" box (deliberately NO dip level — it hasn't stopped falling).
+- **Wait (Risk-Off market gate)** → "the market itself is weak — a risky time for new
+  buys; market steadies and this holds its level → worth a look" + owner's safety line.
+- **Emerging** → a small-starter box ("size small, keep the stop tight — not a
+  confirmed leader yet").
 - **Weak** → an exit line: stays above X → keep; ends a day below X → sell.
 
-Stop / safety line = the recent swing low (or ~1.5×ATR below), whichever the engine
-suggests.
+Stop / safety line = the recent swing low. (The engine also computes a ~1.5×ATR-below
+level, but the read currently always uses the swing low.)
 
 ---
 

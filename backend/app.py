@@ -15,6 +15,7 @@ from __future__ import annotations
 import base64
 import os
 import secrets
+import threading
 import time
 
 from fastapi import FastAPI, Request
@@ -60,14 +61,13 @@ async def _basic_auth(request: Request, call_next):
                             headers={"WWW-Authenticate": 'Basic realm="Market Lens"'})
     return await call_next(request)
 
-# Markets the app actually supports (scan profiles + suffix handling exist for these).
+# Markets the app supports (scan profiles + suffix handling exist for these).
 _MARKETS = {"US", "IN", "UK"}
-# "Strong right now" list: show ALL names that pass the screen (no small cap), deep-read
-# via the same engine so the list tag == the stock-read tag. _DEEP_MAX is only a runaway
-# safety ceiling (log if a market's net ever exceeds it); the scan is cached daily and
-# uses J.memo_on() so the shared market benchmark is fetched once, not per-name.
-_SCAN_LIMIT = 600
-_DEEP_MAX = 450
+# Markets currently SHOWN to users. UK is built and working but hidden for now
+# (TradingView pence-vs-pounds display needs a proper pass before it goes public).
+# To re-enable: set ENABLED_MARKETS=US,IN,UK on the host (Render env var) — no code change.
+_ENABLED = [m.strip() for m in os.environ.get("ENABLED_MARKETS", "US,IN").upper().split(",")
+            if m.strip() in _MARKETS] or ["US"]
 
 # A small starter universe per market so "Strong right now" works out of the box.
 # (The full market-wide scan is the next step; this keeps the screen useful today.)
@@ -80,6 +80,7 @@ _STARTERS = {
 
 # tiny daily cache so repeat hits don't re-fetch: key -> (yyyymmdd, value)
 _CACHE: dict[str, tuple] = {}
+_MOM_LOCK = threading.Lock()      # single-flight for the ~15s momentum scan
 
 
 def _today() -> str:
@@ -92,7 +93,13 @@ def _cached(key: str):
 
 
 def _put(key: str, value):
-    _CACHE[key] = (_today(), value)
+    """Store, and keep the cache bounded: stale-day entries are evicted so the dict
+    can't grow forever across days (each read payload carries ~130-bar chart arrays)."""
+    today = _today()
+    if len(_CACHE) > 1500:
+        for k in [k for k, (d, _) in _CACHE.items() if d != today]:
+            _CACHE.pop(k, None)
+    _CACHE[key] = (today, value)
 
 
 def _screen_resolved(ticker: str, market: str | None, light: bool = False) -> dict:
@@ -266,8 +273,16 @@ def _chart_payload(symbol: str, bundle: dict) -> dict:
 
 
 @app.get("/api/health")
-def health():
+async def health():
+    # async def on purpose: it never touches the threadpool, so the platform health
+    # check still answers even if slow upstream reads have every worker thread busy.
     return {"ok": True, "service": "market-lens"}
+
+
+@app.get("/api/config")
+async def config():
+    """What the frontend should show — currently just the enabled market pills."""
+    return {"ok": True, "markets": _ENABLED}
 
 
 @app.get("/api/read")
@@ -276,18 +291,20 @@ def read(ticker: str, market: str = ""):
     if not ticker:
         return JSONResponse({"ok": False, "error": "Type a stock first."})
     mk = market.strip().upper()
+    mk = mk if mk in _MARKETS else ""          # validate BEFORE it becomes a cache key
     key = f"read:{ticker.upper()}:{mk}"
     cached = _cached(key)
     if cached is not None:
         return cached
     try:
-        out = _read_one(ticker, mk if mk in _MARKETS else None)
+        out = _read_one(ticker, mk or None)
     except Exception as e:  # noqa: BLE001
+        print(f"[read] {ticker} failed: {e}", flush=True)   # server log, not the client
         return JSONResponse({"ok": False,
                              "error": "Couldn't read that stock. Check the ticker and your "
-                                      "internet, then try again.",
-                             "detail": str(e)})
-    _put(key, out)
+                                      "internet, then try again."})
+    if out.get("ok"):        # never day-cache a failure — a throttled lookup would make a
+        _put(key, out)       # valid ticker "unreadable" for every user until midnight
     return out
 
 
@@ -296,19 +313,30 @@ def _mom_item(d: dict) -> dict:
             "price_str": d["price_str"], "sector": d["sector"],
             "industry": d.get("industry") or "", "raw_sector": d.get("raw_sector") or "",
             "lanes": d["lanes"], "why": d["why"], "n_lanes": d["n_lanes"],
-            "perf_w": d.get("perf_w"), "perf_m": d.get("perf_m")}
+            "perf_w": d.get("perf_w"), "perf_m": d.get("perf_m"),
+            "rvol": d.get("rvol")}
 
 
 def _momentum_cached(mk: str) -> list:
     """The raw momentum screen for a market, cached daily (one ~15s TradingView pass,
-    no per-name deep read)."""
+    no per-name deep read). Single-flight: concurrent cold hits wait on one scan instead
+    of each launching their own (a burst of identical queries invites throttling).
+    A FAILED scan ([]) is never cached — otherwise one hiccup at the day's first request
+    would freeze an empty screener until midnight while the UI says 'try again'."""
     key = f"mom:{mk}"
     hit = _cached(key)
     if hit is not None:
         return hit
-    lst = momentum_list(mk)
-    _put(key, lst)
-    return lst
+    with _MOM_LOCK:
+        hit = _cached(key)               # another thread may have filled it while we waited
+        if hit is not None:
+            return hit
+        lst = momentum_list(mk)
+        if lst:
+            _put(key, lst)
+        else:
+            print(f"[scan] momentum_list({mk}) returned empty — NOT cached", flush=True)
+        return lst
 
 
 @app.get("/api/strong")
@@ -318,8 +346,8 @@ def strong(market: str = "US", n: int = 0):
     judgment here (that happens when a stock is opened, via the JLaw read). n>0 = a
     light preview (top n names) for the home teaser; n=0 = the full grouped list."""
     mk = market.strip().upper()
-    if mk not in _STARTERS:
-        mk = "US"
+    if mk not in _ENABLED:
+        mk = _ENABLED[0]
     lst = _momentum_cached(mk)
     if not lst:
         return {"ok": True, "market": mk, "scanned": False, "count": 0,
