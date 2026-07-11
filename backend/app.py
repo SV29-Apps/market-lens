@@ -246,7 +246,7 @@ def _add_period(read: dict) -> None:
         closes = (read.get("chart") or {}).get("closes")
         tag = (read.get("verdict") or {}).get("tag")
         entry = read.get("price")     # time-to-target is measured from where it is now
-        target = (read.get("lines") or {}).get("swing_high")
+        target = (read.get("lines") or {}).get("target")   # the read's effective target
         # target must be REAL by the same rule the "Where it could go" box uses
         # (> 2% above price) — otherwise the page says "near its high, no target"
         # while this line promises "~1 week to reach the target".

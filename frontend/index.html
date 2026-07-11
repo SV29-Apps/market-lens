@@ -368,12 +368,9 @@ function ladderHtml(d){
   const rrTxt = rr ? ` Reward for the risk: ${rr.ratio!=null?`about ${rr.ratio} to 1 — `:""}${esc(rr.note)}.` : "";
   if(dt.target && dt.target.value_str)
     rows += row(esc(dt.target.value_str), "lp-ink2", `${esc(dt.target.note)}.${rrTxt}`);
-  else if(dt.target){  // no recent target above — anchor the top rung with the 1-year high
+  else if(dt.target){  // truly at its 1-year high — anchor the top rung with that high
     const note = String(dt.target.note||""); const Note = note.charAt(0).toUpperCase()+note.slice(1);
-    rows += row(d.high_52w_str?esc(d.high_52w_str):"R:R", "lp-ink2",
-                d.high_52w_str
-                  ? `Its 1-year high — the bigger ceiling overhead. ${esc(Note)}.${rrTxt}`
-                  : `${esc(Note)}.${rrTxt}`);
+    rows += row(d.high_52w_str?esc(d.high_52w_str):"—", "lp-ink2", `${esc(Note)}.${rrTxt}`);
   }
   const nowTxt = {buy:"Current price — a good spot to buy (see the box above).",
                   wait:"Current price — wait for now (see the box above).",
@@ -393,9 +390,14 @@ function ladderHtml(d){
     rows += row(zoneStr, "lp-green", `${zoneTxt} Supports: ${names}.`);
     if(deeper.length) small += `Deeper floors: ${deeper.map(it=>`${esc(it.label)} ${esc(it.value_str)}`).join(" · ")}`;
   }
-  if(L.swing_low != null)
-    rows += row(fmtMoney(L.swing_low, d.currency), "lp-red",
-                "Safety line (recent low) — if you buy and it ends a day below this, sell.");
+  const stopV = L.stop!=null ? L.stop : L.swing_low;
+  if(stopV != null){
+    const tight = L.swing_low!=null && stopV > L.swing_low;
+    rows += row(fmtMoney(stopV, d.currency), "lp-red",
+                tight
+                  ? "Safety line (tight — about 1.5× its usual daily swing below) — if you buy and it ends a day below this, sell."
+                  : "Safety line (recent low) — if you buy and it ends a day below this, sell.");
+  }
   if(dt.period) small += `${small?"<br>":""}${esc(dt.period.text)}`;
   if(small) rows += `<div class="lsmall">${small}</div>`;
   return rows;
@@ -456,7 +458,9 @@ function buildChart(d){
   if(ch.ma50)  ds.push(line("50-day", ch.ma50, "#1D9E75", [5,3], "y"));
   if(ch.ma200) ds.push(line("200-day", ch.ma200, "#BA7517", [5,3], "y"));
   if(ch.rs)    ds.push(line("vs market (RS)", ch.rs, "#7F77DD", null, "y1"));
-  const targ = isExit ? null : L.swing_high, buy = isExit ? null : L.buy, stop = L.swing_low;
+  const targ = isExit ? null : (L.target!=null ? L.target : L.swing_high),
+        buy = isExit ? null : L.buy,
+        stop = L.stop!=null ? L.stop : L.swing_low;
   if(targ != null) ds.push(flat("target", targ, "#B45309"));
   if(buy  != null) ds.push(flat("buy", buy, "#1F9E5A"));
   if(stop != null) ds.push(flat(isExit ? "sell" : "stop", stop, "#E5484D"));

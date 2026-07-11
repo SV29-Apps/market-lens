@@ -177,10 +177,21 @@ def build_plain_read(bundle: dict, news: dict | None = None) -> dict:
     else:
         phase = "resting"
 
+    # tight starter-stop for EMERGING names: ~1.5x the stock's daily range below, never
+    # deeper than the swing low. An early starter with a swing-low stop 20%+ below is
+    # NOT "tight" (HOOD case, 2026-07-11) — JLaw sizes early entries small with a tight
+    # stop, and the R:R should be judged against that stop.
+    tight_stop = None
+    if price and atr14:
+        tight_stop = round(price - 1.5 * atr14, 2)
+        if swing_low:
+            tight_stop = max(swing_low, tight_stop)
+
     ctx = {"name": name, "price": price, "currency": currency, "regime": regime,
            "stock_6m": stock_6m, "ex_1m": ex_1m, "pct_1d": pct_1d,
            "near_high": near_high, "extended": extended, "above200": above200,
            "pct_from_high": pct_from_high, "swing_low": swing_low,
+           "tight_stop": tight_stop,
            "ma10": ma10, "ma20": ma20, "ma50": ma50v}
     cell = _CELLS[(tier, phase)](ctx)
     tag, color = cell["tag"], cell["color"]
@@ -218,6 +229,20 @@ def build_plain_read(bundle: dict, news: dict | None = None) -> dict:
     signals = _patterns(last_candle, recent_gaps, above50, strong_rs, regime, pct_1d, tag,
                         vol_ratio)
 
+    # effective TARGET (JLaw: the next ceiling overhead): the recent swing high when
+    # it's meaningfully above; else the 1-YEAR high when THAT is meaningfully above —
+    # an older ceiling is still the next objective (SMLMAH case, 2026-07-11: at the top
+    # of its recent range but 29% below its yearly high, R:R was wrongly "unmeasurable");
+    # else none (truly at its yearly high).
+    if swing_high and price and swing_high > price * 1.02:
+        eff_target, target_kind = swing_high, "recent"
+    elif high_52w and price and high_52w > price * 1.02:
+        eff_target, target_kind = high_52w, "year"
+    else:
+        eff_target, target_kind = None, None
+    # the stop the numbers are judged against: emerging starters use the TIGHT stop.
+    eff_stop = tight_stop if (tag == "emerging" and tight_stop) else swing_low
+
     return {
         "ok": True,
         "symbol": symbol,
@@ -231,11 +256,13 @@ def build_plain_read(bundle: dict, news: dict | None = None) -> dict:
         "paragraph": paragraph,
         "action": action,
         "detail": _detail(currency, tag, over_extended, extended, vol_ratio, rs_rising,
-                          ex_1m, ex_6m, pct_1d, price, swing_high, buy_level, swing_low),
+                          ex_1m, ex_6m, pct_1d, price, eff_target, target_kind,
+                          buy_level, eff_stop),
         "supports": supports,
         "news": news_lens,
         "signals": signals,
-        "lines": {"swing_high": swing_high, "swing_low": swing_low, "buy": buy_level},
+        "lines": {"swing_high": swing_high, "swing_low": swing_low, "buy": buy_level,
+                  "target": eff_target, "stop": eff_stop},
     }
 
 
@@ -289,10 +316,11 @@ def _cell_leader_deepfade(c):
 
 
 def _cell_emerging_starter(c):
+    stop = c["tight_stop"] or c["swing_low"]
     return _cell("emerging", "amber", "Early — just turning up",
                  "Reclaiming its trend and starting to beat the market. Early-stage, so higher risk.",
                  _para_emerging(c["name"], c["stock_6m"], c["ex_1m"], c["regime"], chased=False),
-                 c["price"], _emerging_action(c["price"], c["swing_low"], c["currency"]))
+                 c["price"], _emerging_action(c["price"], stop, c["currency"]))
 
 
 def _cell_emerging_chased(c):
@@ -517,7 +545,7 @@ def _patterns(last_candle, recent_gaps, above50, strong_rs, regime, pct_1d, tag,
 
 
 def _detail(currency, tag, over_extended, extended, vol_ratio, rs_rising, ex_1m, ex_6m,
-            pct_1d, price, swing_high, buy_level, stop):
+            pct_1d, price, target_val, target_kind, buy_level, stop):
     """The read's inline detail: a target plus three plain 'setup' checks. Each check
     is THREE-STATE — good / watch / bad — not a pass/fail tick, because some factors
     (notably volume) are context-dependent, not simply good or bad.
@@ -568,14 +596,13 @@ def _detail(currency, tag, over_extended, extended, vol_ratio, rs_rising, ex_1m,
     else:
         c3 = {"state": "bad", "label": "Falling behind the market"}
 
-    if swing_high and price and swing_high > price * 1.02:
-        target = {"value_str": _money(swing_high, currency), "note": "its recent high — room above"}
+    if target_val:
+        target = {"value_str": _money(target_val, currency),
+                  "note": ("its recent high — room above" if target_kind == "recent"
+                           else "its 1-year high — the next ceiling above")}
     else:
-        # honest copy: the test is the RECENT swing high, not the 1-year high — a stock
-        # can be at the top of its recent range while far below its yearly high
-        # (SMLMAH audit finding, 2026-07-11).
         target = {"value_str": None,
-                  "note": "at the top of its recent range — no clear target above right now"}
+                  "note": "at its 1-year high — no ceiling above to measure against"}
 
     # Reward vs risk — the "is it worth getting in?" number. From the entry level
     # (buy zone), the stop (safety line) and the target (recent high):
@@ -586,13 +613,11 @@ def _detail(currency, tag, over_extended, extended, vol_ratio, rs_rising, ex_1m,
     reward_risk = None
     entry = buy_level or (price if tag not in ("weak", "avoid") else None)
     if entry and stop and entry > stop:
-        # only define a ratio if there's real room above the CURRENT price — matches
-        # the "Where it could go" box (avoids "no room above" + a positive ratio).
-        if swing_high and price and swing_high > price * 1.02:
+        if target_val:
             # threshold on the ROUNDED ratio the user actually sees: a raw 0.96 shows
             # as "1.0", and "1.0 — poor, you'd risk more than you could gain" reads
             # as a contradiction (audit finding, 2026-07-11).
-            ratio = round((swing_high - entry) / (entry - stop), 1)
+            ratio = round((target_val - entry) / (entry - stop), 1)
             if ratio >= 2:
                 st, note = "good", "good — you could gain more than you'd risk"
             elif ratio >= 1:
@@ -602,7 +627,7 @@ def _detail(currency, tag, over_extended, extended, vol_ratio, rs_rising, ex_1m,
             reward_risk = {"ratio": ratio, "state": st, "note": note}
         else:
             reward_risk = {"ratio": None, "state": "watch",
-                           "note": "can't be measured here — there's no recent high above the price to use as a target"}
+                           "note": "can't be measured here — it's at its 1-year high, so there's no ceiling above to measure to"}
 
     return {"target": target, "checks": [c1, c2, c3], "reward_risk": reward_risk}
 
