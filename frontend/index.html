@@ -77,7 +77,15 @@
     padding:10px 13px;margin:-4px 0 12px;font-size:13px;line-height:1.55}
   .newschk .nlab{font-weight:600;white-space:nowrap}
   .charthint{font-size:12px;color:var(--ink2);text-align:center;margin:-6px 0 12px}
-  .conecap{font-size:12.5px;color:var(--ink);line-height:1.55;background:#F7F8FA;border:1px solid var(--line2);border-radius:var(--radius-sm);padding:10px 13px;margin:0}
+  .conebox{border:1px solid var(--line2);border-radius:var(--radius-sm);padding:15px;
+    display:flex;flex-direction:column}
+  .conebox .lab{font-size:14px;font-weight:600;margin-bottom:6px}
+  .crow{display:flex;justify-content:space-between;align-items:baseline;gap:10px;
+    font-size:14px;padding:9px 2px;border-bottom:1px solid var(--line)}
+  .crow:last-of-type{border-bottom:0}
+  .clab{color:var(--ink2)}
+  .cval{white-space:nowrap}
+  .conebox .note{margin-top:auto;padding-top:10px}
   .sigrow{display:flex;gap:9px;align-items:flex-start;font-size:13.5px;line-height:1.55;margin-top:7px}
   .sigrow:first-of-type{margin-top:0}
   .sigrow .dot{width:9px;height:9px;flex:none;margin-top:5px}
@@ -311,15 +319,21 @@ function newsHtml(d){
 }
 
 
-// "Probable range" caption for the volatility cone — honest framing (a range of normal
-// outcomes from the stock's own wobble, NOT a prediction of direction).
+// "Probable range" box for the volatility cone — honest framing (a range of normal
+// outcomes from the stock's own wobble, NOT a prediction of direction). Structured to
+// mirror the "What to do" box it sits beside.
 function coneHtml(d){
   const c = d.chart && d.chart.cone; if(!c) return "";
   const cur = d.currency;
-  return `<div class="conecap"><b>Probable range over ~${c.weeks} weeks</b> (the stock's own normal wobble, not a forecast of direction):
-    around <b>${fmtMoney(c.b1_lo,cur)}–${fmtMoney(c.b1_hi,cur)}</b> in the typical case (~2 in 3),
-    out to ${fmtMoney(c.b2_lo,cur)}–${fmtMoney(c.b2_hi,cur)} in the wider case (~19 in 20).
-    The shaded fan shows how far it usually travels, <b>not which way</b>.</div>`;
+  const row=(lab,lo,hi,strong)=>`<div class="crow"><span class="clab">${lab}</span>
+    <span class="cval"${strong?' style="font-weight:600"':''}>${fmtMoney(lo,cur)} – ${fmtMoney(hi,cur)}</span></div>`;
+  return `<div class="conebox">
+    <div class="lab">Probable range — next ~${c.weeks} weeks</div>
+    ${row("Typical case (about 2 in 3)", c.b1_lo, c.b1_hi, true)}
+    ${row("Wider case (about 19 in 20)", c.b2_lo, c.b2_hi, false)}
+    <div class="note">The stock's own normal wobble — how far it usually travels, <b>not which way</b>.
+      The shaded fan on the chart draws this range. Not a forecast of direction.</div>
+  </div>`;
 }
 
 
