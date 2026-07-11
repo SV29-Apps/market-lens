@@ -92,7 +92,9 @@
   .para{font-size:15px;line-height:1.7;margin:0 0 16px}
   .action{border:1px solid var(--line2);border-radius:var(--radius-sm);padding:15px}
   .action .lab{font-size:14px;font-weight:600;margin-bottom:4px}
+  .numlab{font-size:12px;color:var(--ink2);margin-top:4px}
   .bignum{font-size:24px;font-weight:600;margin-bottom:12px}
+  .about{font-size:13px;color:var(--ink2);line-height:1.6;margin-top:8px}
   .arow{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:var(--radius-sm);
     margin-bottom:8px;font-size:14px}
   .arow:last-child{margin-bottom:0}
@@ -293,6 +295,7 @@ function renderRead(d){
         <div class="muted" style="font-size:14.5px">${esc(d.price_str)} · ${day}</div></div>
     </div>
     ${statsStrip(d)}
+    ${d.about?`<div class="about">${esc(d.about)}</div>`:""}
     <div class="banner ${bclass}"><h2>${esc(v.headline)}</h2><p>${esc(v.subline)}</p></div>
     ${newsHtml(d)}
     <p class="para">${esc(d.paragraph)}</p>
@@ -301,7 +304,7 @@ function renderRead(d){
     <div class="dgrid" style="margin-top:0${coneHtml(d)?"":";grid-template-columns:1fr"}">
       <div class="action">
         <div class="lab">${a.type==="exit"?"If you own it, watch one number:":"What to do"}</div>
-        ${a.number?`<div class="bignum">${esc(a.number)}</div>`:""}
+        ${a.number?`<div class="numlab">${{buy:"a good spot to buy, around",wait:"the dip level to watch",exit:"your sell line"}[a.type]||""}</div><div class="bignum">${esc(a.number)}</div>`:""}
         ${rows}
         ${a.note?`<div class="note">${esc(a.note)}</div>`:""}
       </div>

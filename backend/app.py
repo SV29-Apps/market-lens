@@ -136,6 +136,60 @@ def _news_for(symbol: str) -> dict:
     return n
 
 
+def _about_for(name: str) -> str | None:
+    """1-2 plain lines about the company (Wikipedia summary, best-effort, daily-cached).
+    Guards against wrong-page hits: the found title must contain the company name's
+    first word AND the text must read like a business description. None -> the read
+    simply shows no 'about' line (same graceful-absence pattern as the News check)."""
+    nm = (name or "").strip()
+    if not nm:
+        return None
+    key = f"about:{nm.lower()}"
+    hit = _cached(key)
+    if hit is not None:
+        return hit or None            # cached "" = known miss; don't refetch today
+    out = ""
+    try:
+        import json as _json
+        import ssl
+        import urllib.parse
+        import urllib.request
+        try:  # Windows Python often lacks a wired CA store for urllib; Render is fine
+            import certifi
+            ctx = ssl.create_default_context(cafile=certifi.where())
+        except Exception:  # noqa: BLE001
+            ctx = None
+
+        def get(url):
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=8, context=ctx) as r:
+                return _json.load(r)
+
+        s = get("https://en.wikipedia.org/w/rest.php/v1/search/title?q="
+                + urllib.parse.quote(nm) + "&limit=1")
+        pages = s.get("pages") or []
+        first = next((w for w in nm.split() if len(w) > 2 and w.lower() != "the"),
+                     nm.split()[0])
+        if pages and first.lower() in (pages[0].get("title") or "").lower():
+            j = get("https://en.wikipedia.org/api/rest_v1/page/summary/"
+                    + urllib.parse.quote(pages[0]["key"]))
+            ext = (j.get("extract") or "").replace("\n", " ").strip()
+            low = ext.lower()
+            biz = any(w in low for w in ("compan", "corporation", "manufactur", "subsidiary",
+                                         "bank", "conglomerate", "retailer", "producer",
+                                         "group", "firm", "brand", "insurer", "operator"))
+            if ext and biz:
+                out = ". ".join(ext.split(". ")[:2]).strip()
+                if not out.endswith("."):
+                    out += "."
+                if len(out) > 260:
+                    out = out[:257].rsplit(" ", 1)[0] + "…"
+    except Exception:  # noqa: BLE001  about is best-effort
+        out = ""
+    _put(key, out)
+    return out or None
+
+
 def _read_one(ticker: str, market: str | None, with_chart: bool = True) -> dict:
     """Engine + plain-language read for one ticker. Adds a small price line for the
     chart unless with_chart=False (list items skip it to save a network call).
@@ -163,6 +217,12 @@ def _read_one(ticker: str, market: str | None, with_chart: bool = True) -> dict:
             snap = snapshot(read["symbol"], mk)
             if snap:
                 read["stats"] = snap
+        except Exception:  # noqa: BLE001
+            pass
+        try:  # 1-2 lines about the business — best-effort
+            ab = _about_for(read.get("name") or "")
+            if ab:
+                read["about"] = ab
         except Exception:  # noqa: BLE001
             pass
     return read

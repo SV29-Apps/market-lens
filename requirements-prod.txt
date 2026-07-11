@@ -8,3 +8,4 @@ pandas>=3.0,<4
 fastapi>=0.138,<1
 uvicorn[standard]>=0.49,<1
 tradingview-screener>=3.2,<4   # whole-market "Strong right now" scan
+certifi>=2024.0                # CA bundle for the Wikipedia "about the company" fetch
