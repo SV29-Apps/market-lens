@@ -127,8 +127,14 @@ Volume only means something **in the direction of the move**:
 ## Reward vs risk  (the "is it worth getting in?" number)
 
 Shown in the read for buy / wait / emerging names (skipped for weak/avoid — there's no buy):
-- **reward** = target (recent high) − entry (the buy zone);
-- **risk** = entry − stop (safety line);
+- **reward** = target − entry (the buy zone); **target cascade (2026-07-11):** the
+  recent swing high when it's >2% above; else the **1-year high** when that's >2% above
+  (an older ceiling is still the next objective — a stock at the top of its recent range
+  but 29% under its yearly high has plenty to measure to, SMLMAH case); else none.
+- **risk** = entry − stop (safety line). **Emerging starters use the TIGHT stop** —
+  ~1.5×ATR below the price, never deeper than the swing low (2026-07-11: a "keep it
+  tight" starter was showing a swing-low stop 23% below, HOOD case). Leaders/weak names
+  keep the swing-low line.
 - **ratio** = reward ÷ risk.
 - 🟢 **≥ 2 : 1** — good (could gain more than you'd risk).
 - 🟠 **1–2 : 1** — modest (reward roughly matches risk).
@@ -154,8 +160,9 @@ Shown in the read for buy / wait / emerging names (skipped for weak/avoid — th
   confirmed leader yet").
 - **Weak** → an exit line: stays above X → keep; ends a day below X → sell.
 
-Stop / safety line = the recent swing low. (The engine also computes a ~1.5×ATR-below
-level, but the read currently always uses the swing low.)
+Stop / safety line = the recent swing low — except **emerging starters**, which use the
+tight ~1.5×ATR stop (capped at the swing low; see Reward vs risk above). The chart's
+stop line and the plan ladder show whichever stop the read actually uses.
 
 ---
 
