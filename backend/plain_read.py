@@ -111,6 +111,10 @@ def build_plain_read(bundle: dict, news: dict | None = None) -> dict:
     strong_rs = (ex_3m or 0) > 0 and (ex_6m or 0) > 2
     near_high = (pct_from_high or -99) > -5                    # within 5% of the 1-year high
     just_popped = pct_1d > 4
+    # the MIRROR of just_popped (added 2026-07-11, MDB case): a big DOWN day is
+    # "mid-fall", not a calm entry — JLaw buys when it STEADIES. Same 4% bar the
+    # screener's Early lane uses to exclude dumping names, so list and read agree.
+    just_dumped = pct_1d < -4
     weak_now = (not above20 and not above50) and ((ex_1m or 0) < 0 or rs_falling)
 
     # "Extended" the JLaw way = stretched above the 50-day in ATR (volatility) terms,
@@ -143,8 +147,8 @@ def build_plain_read(bundle: dict, news: dict | None = None) -> dict:
     #     mixed    — none of the above: no edge, point the user at stronger names
     #   AXIS 2 — what price is doing right now (pullback health), worst state first:
     #     deep_fade — dropped >18% from its high, below the 20-day, RS falling
-    #     sliding   — below the 20-day with RS falling (still going down — a bounce
-    #                 day or being near its high must NOT override this)
+    #     sliding   — below the 20-day with RS falling, OR down >4% today (still going
+    #                 down — a bounce day or being near its high must NOT override this)
     #     stretched — extended (>4 ATRs above the 50-day), near its 1-yr high, or
     #                 just popped >4% today (JLaw: never chase)
     #     resting   — calm: the low-risk spot JLaw actually buys
@@ -170,8 +174,8 @@ def build_plain_read(bundle: dict, news: dict | None = None) -> dict:
 
     if deep_fade:
         phase = "deep_fade"
-    elif not above20 and rs_falling:
-        phase = "sliding"
+    elif (not above20 and rs_falling) or just_dumped:
+        phase = "sliding"          # still going down (trend-sliding OR a >4% down day)
     elif extended or near_high or just_popped:
         phase = "stretched"
     else:
@@ -299,12 +303,22 @@ def _cell_leader_stretched(c):
 
 
 def _cell_leader_sliding(c):
-    # Still SLIDING below its short-term trend with RS fading — not a calm "resting"
-    # pullback yet, so not a buy-NOW. JLaw: buy the dip when it STEADIES / reclaims,
-    # don't catch it mid-fall. (Milder cousin of deep_fade.)
+    # Still SLIDING — below its short-term trend with RS fading, OR a >4% down day
+    # TODAY. Not a calm "resting" pullback yet, so not a buy-NOW. JLaw: buy the dip
+    # when it STEADIES / reclaims, don't catch it mid-fall. (Milder cousin of deep_fade.)
     return _cell("wait", "amber", "Pulling back — wait for it to steady",
-                 "A leader, but it's still sliding below its short-term line. Let it settle and turn back up first.",
+                 "A leader, but it's still falling right now. Let it settle and turn back up first.",
                  _para_settle(c["name"], c["stock_6m"], c["regime"]),
+                 None, _steady_action(c["price"], c["swing_low"], c["currency"]))
+
+
+def _cell_emerging_shaky(c):
+    # An early turn having a SHARP DOWN DAY (or, if the axes ever loosen, sliding) —
+    # a starter-buy on a big red day would contradict "buy when it steadies".
+    return _cell("wait", "amber", "Early turn — but let it settle first",
+                 "Starting to turn up, but it's had a sharp down day. Wait for it to steady.",
+                 _para_emerging(c["name"], c["stock_6m"], c["ex_1m"], c["regime"],
+                                chased="it's had a sharp down day"),
                  None, _steady_action(c["price"], c["swing_low"], c["currency"]))
 
 
@@ -374,8 +388,8 @@ _CELLS = {
     ("leader", "deep_fade"):   _cell_leader_deepfade,
     ("emerging", "resting"):   _cell_emerging_starter,
     ("emerging", "stretched"): _cell_emerging_chased,
-    ("emerging", "sliding"):   _cell_emerging_starter,
-    ("emerging", "deep_fade"): _cell_emerging_starter,
+    ("emerging", "sliding"):   _cell_emerging_shaky,
+    ("emerging", "deep_fade"): _cell_emerging_shaky,
     ("weak", "resting"):       _cell_weak,
     ("weak", "stretched"):     _cell_weak,
     ("weak", "sliding"):       _cell_weak,
@@ -572,6 +586,11 @@ def _detail(currency, tag, over_extended, extended, vol_ratio, rs_rising, ex_1m,
         c2 = {"state": "bad", "label": "Heavy selling right now"}
     elif heavy and up:
         c2 = {"state": "good", "label": "Strong buying — heavy volume, price up"}
+    elif quiet and (pct_1d or 0) < -4:
+        # a >4% down day is not "calm" whatever the volume ratio says — intraday the
+        # session's volume is still filling up, so "quiet" can be an artifact (MDB
+        # case, 2026-07-11: -5.7% day labelled "Calm pullback — quiet selling").
+        c2 = {"state": "watch", "label": "Sharp down day — let it settle"}
     elif quiet:
         c2 = {"state": "good", "label": "Calm pullback — quiet selling"}
     else:

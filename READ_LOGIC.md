@@ -75,10 +75,13 @@ leader's buy **or** an emerging starter-buy — is downgraded to "wait", and the
 moves together: headline, paragraph, action box and the chart's buy line (the old gate
 rewrote only the headline, leaving a "good spot to buy" box under a "go slow" banner).
 Classify order: weak_now → **established leader** (RS 3m&6m>0 + above 200; within this, in
-order: deep-faded → "pulled back hard"; **still-sliding below-20-day + falling-RS →
+order: deep-faded → "pulled back hard"; **still-sliding below-20-day + falling-RS **OR a >4% DOWN day today** →
 "pulling back, wait to steady"** (checked BEFORE the chase test since 2026-07-11 — a one-day
 +4% bounce or being near its high must not flip a still-sliding leader back to "buy the
-dip"); extended/near-high/just-popped → "strong, don't chase"; else → "buy") →
+dip". The >4%-down-day arm is the MIRROR of just-popped, added 2026-07-11 MDB case: a big
+red day is mid-fall, not a calm entry; emerging names get "Early turn — but let it settle
+first" instead of a starter-buy); extended/near-high/just-popped → "strong, don't chase";
+else → "buy") →
 **emerging** (intact-uptrend path *or* early-repair path, see above) → else mixed →
 then the Risk-Off market gate above. Emerging/wait get supports + the news lens like a leader.
 
@@ -103,6 +106,9 @@ Volume only means something **in the direction of the move**:
 - 🟢 **Strong buying — heavy volume, price up** — heavy volume while rising = buyers /
   conviction. This is what a **breakout / buyable gap up** looks like. GOOD.
 - 🟢 **Calm pullback — quiet selling** — a dip on low volume = healthy digestion. GOOD.
+  **Except on a >4% down day** (🟠 "Sharp down day — let it settle", 2026-07-11): a big
+  red day isn't "calm" whatever the ratio says — intraday the session's volume is still
+  filling up, so a low ratio can be an artifact.
 - 🟢 **Trading is calm** — normal volume, nothing notable.
 - 🔴 **Heavy selling right now** — heavy volume while **falling** = distribution /
   people exiting. This is the only volume warning.
