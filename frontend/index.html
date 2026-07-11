@@ -78,8 +78,6 @@
   .newschk .nlab{font-weight:600;white-space:nowrap}
   .charthint{font-size:12px;color:var(--ink2);text-align:center;margin:-6px 0 12px}
   .conecap{font-size:12.5px;color:var(--ink);line-height:1.55;background:#F7F8FA;border:1px solid var(--line2);border-radius:var(--radius-sm);padding:10px 13px;margin:0 0 14px}
-  .sigbox{border:1px solid var(--line2);border-radius:var(--radius-sm);padding:12px 14px;margin:0 0 14px}
-  .sigbox .dlab{margin-bottom:8px}
   .sigrow{display:flex;gap:9px;align-items:flex-start;font-size:13.5px;line-height:1.55;margin-top:7px}
   .sigrow:first-of-type{margin-top:0}
   .sigrow .dot{width:9px;height:9px;flex:none;margin-top:5px}
@@ -104,9 +102,6 @@
   .dbox{background:var(--card);border:1px solid var(--line);border-radius:var(--radius-sm);padding:14px 16px}
   .dlab{font-size:13px;font-weight:700;color:var(--ink)}
   .dval{font-size:15px;margin:3px 0 2px}
-  .checks{margin-top:6px;display:flex;flex-direction:column;gap:8px}
-  .chk{display:flex;align-items:center;gap:10px;font-size:14px;color:var(--ink)}
-  .chk .dot{width:10px;height:10px;flex:none}
   .plan{margin-top:14px;display:flex;flex-direction:column;gap:8px}
   .planrow{font-size:14px;padding:11px 13px;border-radius:var(--radius-sm);line-height:1.55}
   .planbuy{background:var(--green-bg);color:var(--green)}
@@ -128,21 +123,14 @@
   .center{text-align:center;color:var(--ink2);padding:30px 10px;font-size:14px}
   .hidden{display:none}
   .disc{font-size:11px;color:var(--ink3);text-align:center;margin-top:26px;line-height:1.5}
-  /* recent news */
-  .newsbox{margin-top:18px;background:var(--card);border:1px solid var(--line);
-    border-radius:var(--radius-sm);padding:14px 16px}
-  .catflag{background:var(--amber-bg);color:var(--amber);border-radius:var(--radius-sm);
-    padding:10px 12px;font-size:13px;line-height:1.5;margin:8px 0 4px}
-  .nlink{display:block;text-decoration:none;color:inherit;border-top:1px solid var(--line);
-    padding:11px 0}
-  .nlink:first-of-type{border-top:0}
-  .nitem{padding:11px 0;border-top:1px solid var(--line)}
-  .nitem:first-child{border-top:0}
-  .ntitle{font-size:14px;color:var(--ink);line-height:1.45}
-  .nlink:hover .ntitle{color:var(--blue)}
-  .nmeta{font-size:12px;color:var(--ink2);margin-top:3px}
-  .supp{margin-top:14px}
-  .supplist{font-size:12px;color:var(--ink2);margin-top:2px}
+  /* the plan — price ladder (every level in one place, sorted the way price sits) */
+  .lrow{display:flex;gap:12px;align-items:flex-start;padding:9px 0;border-bottom:1px solid var(--line);
+    font-size:13.5px;line-height:1.5}
+  .lrow:last-of-type{border-bottom:0}
+  .lprice{min-width:96px;font-weight:600;white-space:nowrap}
+  .lrow-hl{background:var(--bg);border-radius:8px;padding-left:8px;margin-left:-8px}
+  .lp-green{color:var(--green)} .lp-red{color:var(--red)} .lp-ink2{color:var(--ink2)}
+  .lsmall{font-size:12px;color:var(--ink2);margin-top:8px;padding-top:8px;border-top:1px solid var(--line)}
 </style>
 </head>
 <body>
@@ -303,7 +291,6 @@ function renderRead(d){
     ${chart}
     ${hasChart ? `<div class="charthint">Scroll or drag across the chart to zoom · double-click to reset</div>` : ""}
     ${coneHtml(d)}
-    ${signalsHtml(d)}
     <div class="action">
       <div class="lab">${a.type==="exit"?"If you own it, watch one number:":"What to do"}</div>
       ${a.number?`<div class="bignum">${esc(a.number)}</div>`:""}
@@ -321,16 +308,6 @@ function newsHtml(d){
   return `<div class="newschk ${cl}"><span class="nlab">News check:</span><span>${esc(n.text)}</span></div>`;
 }
 
-// "Chart signals" — plain-language JLaw price-action edges (last bar / gap / relative
-// strength). Informational only; never changes the verdict. Absent when nothing clear fires.
-function signalsHtml(d){
-  const s = d.signals; if(!s || !s.length) return "";
-  const rows = s.map(sg=>{
-    const dot = sg.kind==="good" ? "d-green" : "d-amber";
-    return `<div class="sigrow"><i class="dot ${dot}"></i><span><b>${esc(sg.label)}.</b> ${esc(sg.text)}</span></div>`;
-  }).join("");
-  return `<div class="sigbox"><div class="dlab">What the chart is showing</div>${rows}</div>`;
-}
 
 // "Probable range" caption for the volatility cone — honest framing (a range of normal
 // outcomes from the stock's own wobble, NOT a prediction of direction).
@@ -343,16 +320,6 @@ function coneHtml(d){
     The shaded fan shows how far it usually travels, <b>not which way</b>.</div>`;
 }
 
-// pull-back zone + the supports stacked below the price (goes in the left detail box)
-function supportsHtml(d){
-  const sp = d.supports; if(!sp || !(sp.items||[]).length) return "";
-  const z = sp.zone;
-  const zoneStr = z.single ? esc(z.high_str) : `${esc(z.low_str)}–${esc(z.high_str)}`;
-  const list = sp.items.map(it=>`${esc(it.label)} ${esc(it.value_str)}`).join(" · ");
-  return `<div class="supp"><div class="dlab">If it dips, support sits around</div>
-    <div class="dval"><b style="font-weight:600">${zoneStr}</b></div>
-    <div class="supplist">${list}</div></div>`;
-}
 
 function statsStrip(d){
   const s = d.stats || {};
@@ -368,38 +335,75 @@ function statsStrip(d){
   return (chips||sector) ? `<div class="stats">${chips}</div>${sector}` : "";
 }
 
-function detailHtml(d){
-  const dt = d.detail; if(!dt) return "";
-  const checks = (dt.checks||[]).map(c=>{
-    const dot = {good:'d-green', watch:'d-amber', bad:'d-red'}[c.state] || 'd-amber';
-    return `<div class="chk"><i class="dot ${dot}"></i>${esc(c.label)}</div>`;
-  }).join("");
-  const target = dt.target.value_str
-    ? `<b style="font-weight:500">${esc(dt.target.value_str)}</b> — ${esc(dt.target.note)}`
-    : esc(dt.target.note);
-  let rrHtml = "";
+// The plan — every price level in ONE ladder, sorted the way price sits (top→down):
+// target → current price → buy zone (named supports) → safety line. Reward:risk lives
+// ON the target line, so "no target" and a ratio can never disagree. Weak names skip
+// the ladder — their exit box above already carries the one number that matters.
+function ladderHtml(d){
+  const dt = d.detail || {}, L = d.lines || {}, sp = d.supports, a = d.action || {};
+  if(a.type === "exit") return "";
+  const row = (price, cls, body, hl) =>
+    `<div class="lrow${hl?' lrow-hl':''}"><span class="lprice ${cls}">${price}</span><span>${body}</span></div>`;
+  let rows = "";
   const rr = dt.reward_risk;
-  if(rr){
-    const dot = {good:'d-green', watch:'d-amber', bad:'d-red'}[rr.state] || 'd-amber';
-    const val = rr.ratio!=null ? `about ${rr.ratio} to 1 — ${esc(rr.note)}` : esc(rr.note);
-    rrHtml = `<div class="dlab" style="margin-top:14px">Reward for the risk</div>
-      <div class="chk"><i class="dot ${dot}"></i>${val}</div>`;
+  const rrTxt = rr ? ` Reward for the risk: ${rr.ratio!=null?`about ${rr.ratio} to 1 — `:""}${esc(rr.note)}.` : "";
+  if(dt.target && dt.target.value_str)
+    rows += row(esc(dt.target.value_str), "lp-ink2", `${esc(dt.target.note)}.${rrTxt}`);
+  else if(dt.target)
+    rows += row("—", "lp-ink2", `${esc(dt.target.note)}.${rrTxt}`);
+  const nowTxt = {buy:"Current price — a good spot to buy (see the box above).",
+                  wait:"Current price — wait for now (see the box above).",
+                  none:"Current price."}[a.type] || "Current price.";
+  rows += row(esc(d.price_str), "", nowTxt, true);
+  let small = "";
+  if(sp && (sp.items||[]).length){
+    const num = s => parseFloat(String(s).replace(/[^0-9.]/g,"")) || 0;
+    const lo = num(sp.zone.low_str);
+    const inZone = sp.items.filter(it => num(it.value_str) >= lo);
+    const deeper = sp.items.filter(it => num(it.value_str) < lo);
+    const zoneStr = sp.zone.single ? esc(sp.zone.high_str) : `${esc(sp.zone.low_str)}–${esc(sp.zone.high_str)}`;
+    const names = inZone.map(it=>`${esc(it.label)} ${esc(it.value_str)}`).join(" · ");
+    const zoneTxt = (a.type==="wait" && a.number)
+      ? "Buy zone — dips here and steadies → good spot to buy."
+      : "Pull-back zone — if it dips, buyers tend to step in here.";
+    rows += row(zoneStr, "lp-green", `${zoneTxt} Supports: ${names}.`);
+    if(deeper.length) small += `Deeper floors: ${deeper.map(it=>`${esc(it.label)} ${esc(it.value_str)}`).join(" · ")}`;
   }
-  const periodHtml = dt.period
-    ? `<div class="dlab" style="margin-top:14px">Roughly how long</div><div class="dval">${esc(dt.period.text)}</div>`
-    : "";
-  return `<div class="dgrid">
-      <div class="dbox">
-        <div class="dlab">Where it could go</div><div class="dval">${target}</div>
-        ${rrHtml}
-        ${periodHtml}
-        ${supportsHtml(d)}
-      </div>
-      <div class="dbox">
-        <div class="dlab">Is it a clean setup?</div>
-        <div class="checks" style="margin-top:8px">${checks}</div>
-      </div>
-    </div>`;
+  if(L.swing_low != null)
+    rows += row(fmtMoney(L.swing_low, d.currency), "lp-red",
+                "Safety line (recent low) — if you buy and it ends a day below this, sell.");
+  if(dt.period) small += `${small?"<br>":""}${esc(dt.period.text)}`;
+  if(small) rows += `<div class="lsmall">${small}</div>`;
+  return rows;
+}
+
+// ONE checks list — the setup checks + what the chart is showing, merged. Greens
+// first, warnings last, so the weakest points are read last and remembered.
+function checksHtml(d){
+  const dt = d.detail || {};
+  const items = [];
+  (dt.checks||[]).forEach(c => items.push({state:c.state, html:esc(c.label)}));
+  (d.signals||[]).forEach(sg => items.push({state:sg.kind==="good"?"good":"watch",
+    html:`<b>${esc(sg.label)}.</b> ${esc(sg.text)}`}));
+  if(!items.length) return "";
+  const rank = {good:0, watch:1, bad:2};
+  items.sort((x,y)=>(rank[x.state]??1)-(rank[y.state]??1));
+  return items.map(it=>{
+    const dot = {good:"d-green", watch:"d-amber", bad:"d-red"}[it.state] || "d-amber";
+    return `<div class="sigrow"><i class="dot ${dot}"></i><span>${it.html}</span></div>`;
+  }).join("");
+}
+
+function detailHtml(d){
+  if(!d.detail) return "";
+  const ladder = ladderHtml(d);
+  const checks = checksHtml(d);
+  if(!ladder && !checks) return "";
+  const left = ladder ? `<div class="dbox"><div class="dlab">The plan — every number in one place</div>
+      <div style="margin-top:6px">${ladder}</div></div>` : "";
+  const right = checks ? `<div class="dbox"><div class="dlab">Checks — setup + what the chart shows</div>
+      <div style="margin-top:8px">${checks}</div></div>` : "";
+  return `<div class="dgrid"${(!ladder||!checks)?' style="grid-template-columns:1fr"':''}>${left}${right}</div>`;
 }
 
 // Interactive chart (Chart.js): price + 20/50/200-day averages + RS line + level

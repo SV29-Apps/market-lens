@@ -359,6 +359,15 @@ def _supports(price, ma10, ma20, ma50, ma200, swing_low, currency):
     sits below the price (rare for a leader — it would be at/under all its averages)."""
     cand = [("10-day line", ma10), ("20-day line", ma20), ("50-day line", ma50),
             ("200-day line", ma200), ("recent low", swing_low)]
+    # the nearest ROUND NUMBER below the price — a level both beginners and big money
+    # watch (the reference app showed e.g. "round number — 900" in its pull-back zone).
+    if price and price > 0:
+        step = 10 if price < 250 else (50 if price < 1000 else (100 if price < 5000 else 500))
+        rn = int(price // step) * step
+        if rn >= price:
+            rn -= step
+        if rn > 0:
+            cand.append(("round number", float(rn)))
     below = [(lab, v) for lab, v in cand
              if v is not None and price is not None and 0 < v < price]
     if not below:

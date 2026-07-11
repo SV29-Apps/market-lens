@@ -155,9 +155,18 @@ level, but the read currently always uses the swing low.)
 
 ## Pull-back zone + stacked supports  (`_supports`, added 2026-07-01)
 
-Shown for buy / wait names, in the "Where it could go" box. Instead of one buy level,
-it lists the supports **below** the current price and shows a **buy-on-dip zone**:
-- Candidate levels: the **10 / 20 / 50 / 200-day lines** and the **recent low**.
+Shown for buy / wait / emerging names. **Layout (2026-07-11): the read's lower half is
+ONE price-ladder card** ("The plan — every number in one place": target with reward:risk
+on the same line → current price → buy zone with its named supports → safety line →
+deeper floors + rough timing as small print) **plus ONE merged dot-list** ("Checks" =
+setup checks + chart signals, greens first). The timing line only renders when a real
+target exists (same >2% rule as the target itself). Weak/avoid names skip the ladder —
+their exit box carries the one number that matters. Instead of one buy level, the zone
+lists the supports **below** the current price:
+- Candidate levels: the **10 / 20 / 50 / 200-day lines**, the **recent low**, and the
+  nearest **round number** below the price (added 2026-07-11; step scales with price —
+  10 under 250, 50 under 1000, 100 under 5000, else 500 — and the 0.5% de-dup drops it
+  when it sits on top of a moving-average line).
 - Keep only levels **below** the price (a support you're already above is where a dip
   could find footing), nearest first; de-dup levels within 0.5% of each other.
 - The **zone** = the stacked levels clustered at the top (each within ~6% of the one

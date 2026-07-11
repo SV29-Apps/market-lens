@@ -187,8 +187,11 @@ def _add_period(read: dict) -> None:
         tag = (read.get("verdict") or {}).get("tag")
         entry = read.get("price")     # time-to-target is measured from where it is now
         target = (read.get("lines") or {}).get("swing_high")
+        # target must be REAL by the same rule the "Where it could go" box uses
+        # (> 2% above price) — otherwise the page says "near its high, no target"
+        # while this line promises "~1 week to reach the target".
         if not (closes and len(closes) > 30 and tag not in ("weak", "avoid")
-                and entry and target and target > entry * 1.01):
+                and entry and target and target > entry * 1.02):
             return
         rets = np.diff(np.log(closes))
         dvol = float(np.std(rets))
