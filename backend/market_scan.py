@@ -267,7 +267,9 @@ def momentum_list(market_key: str, cap: int = 400) -> list[dict]:
                   # clearly building, the move is no longer *early*"), so it's dropped as a
                   # hard filter. The structural + performance gates below define "early".
                   col("Perf.1M") > 0, col("Perf.W") < p["wk"],  # turning up, but NOT a fast mover
-                  col("change") < p["day"], col("change") > -4],  # not a spike day, not dumping today
+                  # < 4% today matches the read's own "just popped, don't chase" bar (4%),
+                  # so an Early candidate can never read "don't chase the jump" the same day
+                  col("change") < 4, col("change") > -4],
     }
     near_factor = 1 - p["near_high"] / 100.0
     cols = ["name", "description", "close", "change", "Perf.W", "Perf.1M", "Perf.3M",
@@ -310,6 +312,15 @@ def momentum_list(market_key: str, cap: int = 400) -> list[dict]:
                 if bench["m1"] is not None and not (p1 is not None and p1 > bench["m1"]):
                     continue                                          # starting to beat market
                 if p6 is not None and p6 >= 30:                       # hasn't already run huge
+                    continue
+                # a genuine Stage 1->2 turn comes FROM BEHIND: still clearly lagging the
+                # index over 6 months (by >= 2 pts), only now starting to beat it.
+                # Without this, an ESTABLISHED leader that dipped and re-approached its
+                # 50-day (e.g. NVDA, +12% in 6m) lands in "Early" while its own read
+                # calls it "a real leader" (user-reported 2026-07-11). The 2-pt margin
+                # + the read's own 2-pt leader bar keep borderline names from straddling
+                # the two data sources (TradingView here, Yahoo in the read).
+                if bench["m6"] is not None and p6 is not None and p6 > bench["m6"] - 2:
                     continue
             tk = str(r["name"])
             d = merged.get(tk)

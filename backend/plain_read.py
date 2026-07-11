@@ -103,7 +103,12 @@ def build_plain_read(bundle: dict, news: dict | None = None) -> dict:
     above50 = (v_ma50 or 0) > 0
     above20 = (v_ma20 or 0) > 0
     above200 = (v_ma200 or 0) > 0
-    strong_rs = (ex_3m or 0) > 0 and (ex_6m or 0) > 0           # beating the market 3m & 6m
+    # An ESTABLISHED leader must be ahead over 6 months by more than a rounding error
+    # (> 2 pts, not > 0): a name ahead by +0.1% is statistical noise, and blind judges
+    # + the screener's independent data source both read such names as EARLY turns,
+    # not proven leaders (AMBA case, 2026-07-11). Hairline names fall to the emerging
+    # tier, which fits them better (starter-size, higher-risk framing).
+    strong_rs = (ex_3m or 0) > 0 and (ex_6m or 0) > 2
     near_high = (pct_from_high or -99) > -5                    # within 5% of the 1-year high
     just_popped = pct_1d > 4
     weak_now = (not above20 and not above50) and ((ex_1m or 0) < 0 or rs_falling)
@@ -210,7 +215,8 @@ def build_plain_read(bundle: dict, news: dict | None = None) -> dict:
     # Chart signals — plain-language JLaw price-action edges from the last bar + gaps + RS.
     # Informational only; does NOT change the verdict.
     last_candle = _g(f, "daily", "last_candle", default={})
-    signals = _patterns(last_candle, recent_gaps, above50, strong_rs, regime, pct_1d, tag)
+    signals = _patterns(last_candle, recent_gaps, above50, strong_rs, regime, pct_1d, tag,
+                        vol_ratio)
 
     return {
         "ok": True,
@@ -291,9 +297,14 @@ def _cell_emerging_starter(c):
 
 def _cell_emerging_chased(c):
     dip = _dip_below(c["price"], c["ma10"], c["ma20"], c["ma50"])
-    return _cell("wait", "amber", "Gaining strength — but don't chase the jump",
-                 "Turning up and beating the market lately, but it just ran. Wait for a pullback.",
-                 _para_emerging(c["name"], c["stock_6m"], c["ex_1m"], c["regime"], chased=True),
+    # say WHY it's a chase — "the jump" wording on a name that never jumped (it was
+    # merely near its highs) confused readers (audit finding, 2026-07-11).
+    why = ("it just jumped" if (c["pct_1d"] or 0) > 4 else
+           "it's right near its recent highs" if c["near_high"] else
+           "it has run up quickly")
+    return _cell("wait", "amber", "Gaining strength — but don't chase it here",
+                 f"Turning up and beating the market lately, but {why}. Wait for a pullback.",
+                 _para_emerging(c["name"], c["stock_6m"], c["ex_1m"], c["regime"], chased=why),
                  dip, _buy_dip_action(dip, c["swing_low"], c["currency"]))
 
 
@@ -440,7 +451,8 @@ def _news_lens(tag, news, big_move, name):
             "color": color, "text": text}
 
 
-def _patterns(last_candle, recent_gaps, above50, strong_rs, regime, pct_1d, tag):
+def _patterns(last_candle, recent_gaps, above50, strong_rs, regime, pct_1d, tag,
+              vol_ratio=None):
     """Plain-language 'chart signals' — the JLaw price-action edges the daily snapshot can
     compute UNAMBIGUOUSLY: the last bar's shape (long body / long tail), a recent gap
     (buyable-gap-up / gap-down), and relative strength while the market is soft. These are
@@ -478,6 +490,10 @@ def _patterns(last_candle, recent_gaps, above50, strong_rs, regime, pct_1d, tag)
                     "strength is exactly what marks out a leader during a pullback."))
 
     # --- last-bar shape (pick the clearest one) ---
+    # The big-body claims ("strong buying/heavy selling") need VOLUME behind them —
+    # a wide bar on quiet volume is noise, and "heavy selling" next to the volume
+    # check's own "quiet selling" contradicted itself (audit finding, 2026-07-11).
+    quiet_vol = vol_ratio is not None and vol_ratio < 1.0
     if lw >= 45 and body <= 45:
         out.append((3, "Long lower tail",
                     "The last bar dipped but closed back near its high — buyers stepped in on the "
@@ -486,10 +502,10 @@ def _patterns(last_candle, recent_gaps, above50, strong_rs, regime, pct_1d, tag)
         out.append((3, "Long upper tail",
                     "The last bar pushed up but got sold back down — sellers rejected the highs, so "
                     "don't chase it here."))
-    elif body >= 65 and green and p1 > 0:
+    elif body >= 65 and green and p1 > 0 and not quiet_vol:
         out.append((2, "Big green bar",
                     "A wide, full-bodied up day — strong buying and conviction behind the move."))
-    elif body >= 65 and not green and p1 < 0:
+    elif body >= 65 and not green and p1 < 0 and not quiet_vol:
         out.append((2, "Big red bar",
                     "A wide, full-bodied down day — heavy selling; wait for it to steady before "
                     "trusting a bounce."))
@@ -555,8 +571,11 @@ def _detail(currency, tag, over_extended, extended, vol_ratio, rs_rising, ex_1m,
     if swing_high and price and swing_high > price * 1.02:
         target = {"value_str": _money(swing_high, currency), "note": "its recent high — room above"}
     else:
+        # honest copy: the test is the RECENT swing high, not the 1-year high — a stock
+        # can be at the top of its recent range while far below its yearly high
+        # (SMLMAH audit finding, 2026-07-11).
         target = {"value_str": None,
-                  "note": "already near its 1-year high — limited room above right now"}
+                  "note": "at the top of its recent range — no clear target above right now"}
 
     # Reward vs risk — the "is it worth getting in?" number. From the entry level
     # (buy zone), the stop (safety line) and the target (recent high):
@@ -570,17 +589,20 @@ def _detail(currency, tag, over_extended, extended, vol_ratio, rs_rising, ex_1m,
         # only define a ratio if there's real room above the CURRENT price — matches
         # the "Where it could go" box (avoids "no room above" + a positive ratio).
         if swing_high and price and swing_high > price * 1.02:
-            ratio = (swing_high - entry) / (entry - stop)
+            # threshold on the ROUNDED ratio the user actually sees: a raw 0.96 shows
+            # as "1.0", and "1.0 — poor, you'd risk more than you could gain" reads
+            # as a contradiction (audit finding, 2026-07-11).
+            ratio = round((swing_high - entry) / (entry - stop), 1)
             if ratio >= 2:
                 st, note = "good", "good — you could gain more than you'd risk"
             elif ratio >= 1:
                 st, note = "watch", "modest — the reward roughly matches the risk"
             else:
                 st, note = "bad", "poor — you'd risk more than you could gain here"
-            reward_risk = {"ratio": round(ratio, 1), "state": st, "note": note}
+            reward_risk = {"ratio": ratio, "state": st, "note": note}
         else:
             reward_risk = {"ratio": None, "state": "watch",
-                           "note": "can't be measured here — it's near its high, so there's no target above to measure against"}
+                           "note": "can't be measured here — there's no recent high above the price to use as a target"}
 
     return {"target": target, "checks": [c1, c2, c3], "reward_risk": reward_risk}
 
@@ -658,10 +680,11 @@ def _para_settle(name, stock_6m, regime):
 
 
 def _para_emerging(name, stock_6m, ex_1m, regime, chased):
+    """chased = falsy (calm starter) or the WHY-string for the don't-chase variant."""
     lead = (f"{name} was lagging the market, but it has started to turn up — reclaiming its "
             f"trend and beating the market lately, with {_market_phrase(regime)}. This is an "
             f"early move: real, but not yet a proven leader, so it carries more risk.")
-    tail = (" It just jumped, though, so it's better to wait for it to settle than to chase."
+    tail = (f" But {chased}, so it's better to wait for a calmer spot than to chase."
             if chased else " If it keeps following through, it could become a new leader.")
     return lead + tail
 

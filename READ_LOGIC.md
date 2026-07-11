@@ -22,6 +22,10 @@ boundary — don't add an `elif`.
 - **Buy-ready (green)** — a leader (beating the market over 3 & 6 months, above its
   200-day) that is **resting at a calmer spot** (not stretched, not near its high,
   didn't just pop). *JLaw: only buy the strongest names, and only at a low-risk edge.*
+  **The 6-month lead must be > 2 pts (2026-07-11)** — a hairline +0.1% "lead" is noise;
+  such names read as **emerging** instead (blind-judge finding, AMBA case). The screener's
+  Early lane mirrors this with a ≥2-pt *lagging* requirement, so a borderline name can't
+  sit in "Early" while the read calls it a proven leader.
 - **Strong, wait (amber)** — a leader, **but** it's stretched, near its 1-year high,
   or just jumped. *JLaw: never chase — wait for a pullback to a low-risk entry.*
   **"Stretched" is measured in the stock's OWN volatility (2026-07-11): > 4×ATR above
@@ -129,8 +133,10 @@ Shown in the read for buy / wait / emerging names (skipped for weak/avoid — th
 - 🟢 **≥ 2 : 1** — good (could gain more than you'd risk).
 - 🟠 **1–2 : 1** — modest (reward roughly matches risk).
 - 🔴 **< 1 : 1** — poor (you'd risk more than you could gain).
-- 🟠 **can't be measured here** — near its 1-year high, so there's no target above to
-  measure against (honest no-number case, 2026-07-11 — matches the old app's behaviour).
+- 🟠 **can't be measured here** — no RECENT high above the price to use as a target
+  (honest no-number case; wording fixed 2026-07-11 — the test is the recent swing high,
+  not the 1-year high, and the copy now says so). Thresholds are applied to the ROUNDED
+  ratio the user sees, so "1.0" can never read as "poor".
 - *JLaw: reward:risk sets your SIZE, not whether to participate — but a poor ratio is a
   strong reason to pass or size tiny. Pulled-back leaders show better ratios than
   extended ones (more room to target, tighter stop). Added 2026-07-01.*

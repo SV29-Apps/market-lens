@@ -368,11 +368,13 @@ function ladderHtml(d){
   const rrTxt = rr ? ` Reward for the risk: ${rr.ratio!=null?`about ${rr.ratio} to 1 — `:""}${esc(rr.note)}.` : "";
   if(dt.target && dt.target.value_str)
     rows += row(esc(dt.target.value_str), "lp-ink2", `${esc(dt.target.note)}.${rrTxt}`);
-  else if(dt.target)   // no target above — anchor the top rung with the 1-year high itself
+  else if(dt.target){  // no recent target above — anchor the top rung with the 1-year high
+    const note = String(dt.target.note||""); const Note = note.charAt(0).toUpperCase()+note.slice(1);
     rows += row(d.high_52w_str?esc(d.high_52w_str):"R:R", "lp-ink2",
                 d.high_52w_str
-                  ? `Its 1-year high — price is already close to it, so limited room above right now.${rrTxt}`
-                  : `${esc(dt.target.note)}.${rrTxt}`);
+                  ? `Its 1-year high — the bigger ceiling overhead. ${esc(Note)}.${rrTxt}`
+                  : `${esc(Note)}.${rrTxt}`);
+  }
   const nowTxt = {buy:"Current price — a good spot to buy (see the box above).",
                   wait:"Current price — wait for now (see the box above).",
                   none:"Current price."}[a.type] || "Current price.";
