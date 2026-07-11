@@ -355,13 +355,15 @@ function supportsHtml(d){
 }
 
 function statsStrip(d){
-  const s = d.stats; if(!s) return "";
+  const s = d.stats || {};
   const pctChip=(lab,v)=>{ if(v==null) return "";
     const c = v>0?'var(--green)':(v<0?'var(--red)':'var(--ink)');
     return `<span class="statchip"><b>${lab}</b> <span style="color:${c}">${(+v).toFixed(1)}%</span></span>`; };
   const chip=(lab,val)=> (val==null||val==="")?"":`<span class="statchip"><b>${lab}</b> ${esc(String(val))}</span>`;
   const chips = pctChip("Week",s.perf_w)+pctChip("Month",s.perf_m)
-    + chip("P/E", s.pe!=null?(+s.pe).toFixed(1):null) + chip("Turnover today", s.turnover);
+    + chip("P/E", s.pe!=null?(+s.pe).toFixed(1):null)
+    + chip("52-wk high", d.high_52w_str)
+    + chip("Turnover today", s.turnover);
   const sector = s.sector ? `<div class="small muted" style="margin-top:6px">${esc(s.sector)}${s.industry?' › '+esc(s.industry):''}</div>` : "";
   return (chips||sector) ? `<div class="stats">${chips}</div>${sector}` : "";
 }
@@ -595,10 +597,10 @@ function toggleSector(btn){
 }
 
 const VIEW_INTRO = {
-  fast:  "Fast movers — up big this week, month or today. Tap any for its JLaw read.",
-  quiet: "Quiet leaders — steady at new highs and beating the market. Tap any for its JLaw read.",
-  early: "Possible early turns — reclaiming their trend on rising volume. These are <b>candidates to check on the chart</b>, not confirmed — open one for its JLaw read.",
-  sector:"Grouped by sector → industry (where money is clustering). Tap any for its JLaw read.",
+  fast:  "Fast movers — up big this week, month or today. Tap any for its full read.",
+  quiet: "Quiet leaders — steady at new highs and beating the market. Tap any for its full read.",
+  early: "Possible early turns — reclaiming their trend on rising volume. These are <b>candidates to check on the chart</b>, not confirmed — open one for its full read.",
+  sector:"Grouped by sector → industry (where money is clustering). Tap any for its full read.",
 };
 
 function renderStrongView(){

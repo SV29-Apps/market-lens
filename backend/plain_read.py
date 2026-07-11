@@ -84,6 +84,7 @@ def build_plain_read(bundle: dict, news: dict | None = None) -> dict:
     ma50v = _g(d_ma, "ma50", "value")
     ma200v = _g(d_ma, "ma200", "value")
     pct_from_high = _g(f, "fifty_two_week", "pct_from_high")   # negative = below high
+    high_52w = _g(f, "fifty_two_week", "high")
     swing_low = _g(f, "daily", "swing", "swing_low")
     swing_high = _g(f, "daily", "swing", "swing_high")
 
@@ -217,6 +218,7 @@ def build_plain_read(bundle: dict, news: dict | None = None) -> dict:
         "name": name,
         "price": price,
         "price_str": _money(price, currency),
+        "high_52w_str": _money(high_52w, currency) if high_52w else None,
         "currency": currency,
         "pct_1d": round(pct_1d, 1),
         "verdict": {"tag": tag, "color": color, "headline": headline, "subline": subline},
@@ -453,7 +455,7 @@ def _patterns(last_candle, recent_gaps, above50, strong_rs, regime, pct_1d, tag)
         if g.get("dir") == "up" and gp >= 3 and above50 and tag not in ("weak", "avoid"):
             out.append((5, "Gapped up",
                         f"It jumped up ~{round(gp)}% recently and is holding above its 50-day line — a "
-                        f"'buyable gap-up' style move (a JLaw entry edge). Big gaps are usually news, "
+                        f"'buyable gap-up' style move (a classic entry edge). Big gaps are usually news, "
                         f"so check what drove it."))
         elif g.get("dir") == "down" and gp <= -3:
             out.append((5, "Gapped down",
@@ -464,7 +466,7 @@ def _patterns(last_candle, recent_gaps, above50, strong_rs, regime, pct_1d, tag)
     if regime in ("Neutral", "Risk-Off") and strong_rs and above50 and tag not in ("weak", "avoid"):
         out.append((4, "Holding up in a soft market",
                     "It's staying strong while the broader market is only so-so — that relative "
-                    "strength is exactly what JLaw looks for during a pullback."))
+                    "strength is exactly what marks out a leader during a pullback."))
 
     # --- last-bar shape (pick the clearest one) ---
     if lw >= 45 and body <= 45:
