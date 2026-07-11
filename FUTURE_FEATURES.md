@@ -115,15 +115,43 @@ prompts the reader to check, doesn't claim to match a headline to the move. See
 
 - **Full plain-English essay read** (beyond the templated read) — an optional longer,
   free-flowing write-up. On a hosted server this needs either a paid API key or the
-  local Max-plan MCP trick; the free templated read is the default. *(Parked.)*
+  local Max-plan MCP trick; the free templated read is the default. *(Parked.)* This is
+  **Tier 2** of the "JLaw snapshot" idea below — the narrative prose (theme-vs-catalyst
+  nuance, sizing/psychology, bull/digest/invalidation scenarios) that only an LLM produces.
+
+## JLaw "snapshot card" — a structured verdict summary (Tier 1, deterministic)
+
+*(Raised by user 2026-07-07, after seeing a full 9-section JLaw verdict for ARKG.)* A compact
+card on the read page that assembles the momentum verdict into one scannable block:
+**Stance · Market gate (Risk-On/Off) · RS leader (+ 1/3/6m excess vs index) · Extension
+(% above 20/50-DMA) · Entry band · Stop / Target / R:R · one-line takeaway.**
+
+- **~80% of the data already exists** in the `/api/read` payload (`verdict`, `paragraph`,
+  `supports.zone`, `lines`, `action.note` = safety line, `stats` = perf/sector) or elsewhere
+  in the engine (the screener's `_bench_perf` true-excess; `price_vs_ma_pct` extension).
+  It's mostly **surfacing + assembling**, staying deterministic / instant / free / no API key.
+- **Needs adding** (not computed today, all standard TA): **ATR-based stop distance**, a
+  **measured-move target**, the **explicit R:R number**, and **wiring the market-gate**
+  (broad-market Risk-On/Off) into the read. *Effort: moderate.*
+- This is the cheap sibling of the "AI essay" (Tier 2) above — ~80% of the value with none
+  of the LLM cost/latency/key. Recommended as the next feature if we resume building.
 
 ---
 
 ## Deploy / hosting
 
-- **Go live on Render** from the user's own GitHub repo (the app is already Render-ready:
-  `render.yaml` + `Procfile` + `requirements-prod.txt`). This is the planned next step,
-  not abandoned. Free tier sleeps when idle; `$7/mo` keeps it always-on.
+- **Go live on Render — DONE (2026-07-07).** Live at **https://global-market-lens.onrender.com**
+  (repo `SV29-Apps/market-lens`, auto-deploys on push to `main`). Deployed as a plain Web Service
+  (NOT blueprint-managed — the `render.yaml`/`Procfile` are still in the repo but the live service
+  is configured in the dashboard). Free tier sleeps when idle (~30–60s cold start); `$7/mo` keeps
+  it always-on. Note: Render **can't rename an existing service's `onrender.com` subdomain** — a
+  specific URL requires creating a fresh service with that name. News (Alpha Vantage) is OFF on the
+  host because AV throttles Render's shared datacenter IP, even with a valid key — works locally.
+
+- **Site login (HTTP Basic Auth) — DONE (2026-07-07).** `backend/app.py` `_basic_auth` middleware
+  gates the whole site when BOTH `APP_USERNAME` and `APP_PASSWORD` env vars are set (`/api/health`
+  exempt so Render monitoring works); fully OPEN when unset (local dev unaffected). Change the
+  credentials any time via those two env vars → redeploy. Verified live (no/wrong creds → 401).
 
 ---
 
@@ -165,9 +193,6 @@ prompts the reader to check, doesn't claim to match a headline to the move. See
   math is unambiguous; leave the rest to the chart + a future LLM/Max read). *(Raised by user
   2026-07-03: "have you incorporated chart reads as per JLaw method?" — answer: measurable
   signals yes, chart-pattern reads no. This is the item to build for that.)*
-
-- **Weak / short-watch list** — a separate view of the weakest names (for advanced users).
-  Deliberately left out of the beginner app to avoid nudging toward shorting. *(Parked.)*
 
 - **Weak / short-watch list** — a separate view of the weakest names (for advanced users).
   Deliberately left out of the beginner app to avoid nudging toward shorting. *(Parked.)*
