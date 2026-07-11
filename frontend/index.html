@@ -360,9 +360,20 @@ function statsStrip(d){
 // the ladder — their exit box above already carries the one number that matters.
 function ladderHtml(d){
   const dt = d.detail || {}, L = d.lines || {}, sp = d.supports, a = d.action || {};
-  if(a.type === "exit") return "";
   const row = (price, cls, body, hl) =>
     `<div class="lrow${hl?' lrow-hl':''}"><span class="lprice ${cls}">${price}</span><span>${body}</span></div>`;
+  if(a.type === "exit"){
+    // weak names get a MINI ladder (context high → price → sell line) — no buy zone or
+    // target, because the app isn't suggesting an entry. Keeps every read consistent.
+    let rows = "";
+    if(d.high_52w_str)
+      rows += row(esc(d.high_52w_str), "lp-ink2", "Its 1-year high — context for how far it has slipped.");
+    rows += row(esc(d.price_str), "", "Current price — if you own it, the line below is the one to watch.", true);
+    const sv = L.stop!=null ? L.stop : L.swing_low;
+    if(sv!=null)
+      rows += row(fmtMoney(sv, d.currency), "lp-red", "Sell line — ends a day below this → sell it. Don't own it? Just skip it.");
+    return rows;
+  }
   let rows = "";
   const rr = dt.reward_risk;
   const rrTxt = rr ? ` Reward for the risk: ${rr.ratio!=null?`about ${rr.ratio} to 1 — `:""}${esc(rr.note)}.` : "";
