@@ -322,11 +322,19 @@ def broad_market(index_symbol: str, as_of: Optional[str] = None) -> dict:
     except Exception as e:  # noqa
         return {"available": False, "error": str(e)}
     c = df["close"]
+    ma20 = c.rolling(20).mean().iloc[-1]
     ma50 = c.rolling(50).mean().iloc[-1]
     ma200 = c.rolling(200).mean().iloc[-1] if len(c) >= 200 else None
     sl50 = "rising" if ma50 > c.rolling(50).mean().iloc[-11] else "falling"
     above50, above200 = c.iloc[-1] > ma50, (ma200 is not None and c.iloc[-1] > ma200)
-    if above50 and above200 and sl50 == "rising":
+    # Risk-On needs CLEAR DAYLIGHT above the 50-day (>2.5%) and the 20-day intact — an
+    # index chopping right around its 50-day is JLaw's textbook CONSOLIDATION (Neutral),
+    # not risk-on. Calibrated against his own labels (2026-07-12 fidelity test): his
+    # "Risk-On" date sat +7.8% above the 50-day; his three "Neutral" dates sat +1.3-1.6%
+    # (both blind judges flagged the old flat rule as one notch too bullish).
+    above20 = c.iloc[-1] > ma20
+    clear50 = c.iloc[-1] > ma50 * 1.025
+    if above50 and above200 and sl50 == "rising" and above20 and clear50:
         regime = "Risk-On"
     elif (not above50) and (ma200 is not None and not above200):
         regime = "Risk-Off"

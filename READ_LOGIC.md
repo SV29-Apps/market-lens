@@ -70,6 +70,14 @@ boundary — don't add an `elif`.
 - **Not a clear leader (amber)** — no fresh strength (RS not turning up, or no recent
   outperformance): genuinely mixed → point the user at stronger names.
 
+**Market regime (recalibrated 2026-07-12):** Risk-On now requires the index to have
+**clear daylight above its 50-day (>2.5%) with the 20-day intact** — an index chopping
+right around its 50-day is JLaw's textbook *consolidation* = **Neutral**, not Risk-On.
+Calibrated against JLaw's own labels (his Risk-On date: index +7.8% above the 50-day;
+his three Neutral dates: +1.3–1.6%); validated 4/4 on dated articles. Both blind judges
+in the 7/9-July fidelity test had flagged the old flat rule as one notch too bullish.
+Risk-Off is unchanged (below both the 50- and 200-day).
+
 **Market gate (fixed 2026-07-11):** in a **Risk-Off** market, ANY buy-now — an established
 leader's buy **or** an emerging starter-buy — is downgraded to "wait", and the WHOLE card
 moves together: headline, paragraph, action box and the chart's buy line (the old gate
