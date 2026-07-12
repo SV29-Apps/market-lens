@@ -380,6 +380,51 @@ def _mom_item(d: dict) -> dict:
             "rvol": d.get("rvol"), "ready": d.get("ready"), "dip_q": d.get("dip_q")}
 
 
+def _verify_buyzone(lst: list, mk: str) -> None:
+    """The Buy-zone tab makes the app's strongest promise ("a calm entry may exist
+    today"), and the scanner (TradingView) and the read (Yahoo) can disagree on
+    razor-edge names — GENUSPOWER sat exactly ON its 50-day (TV +0.0%, Yahoo -0.2%),
+    so the lane said "resting" while the read said WEAK (2026-07-12). No threshold
+    margin closes a two-source straddle, so every candidate is VERIFIED by the ACTUAL
+    read engine before the tab shows it: read tag buy/emerging stays (green dot), a
+    settling "wait" stays (amber), weak/avoid/mixed/don't-chase lose the lane. The tab
+    is CURATED: the 50 tightest-to-support candidates get verified (IN ran 122 raw
+    candidates — the rest are dropped, quality over quantity); ~20s parallel work on
+    the day's first scan. SORT NOTE: dip_q can be exactly 0.0 (sitting ON the line —
+    the BEST candidates), so never use `or 9` for the missing-value fallback: falsy
+    0.0 would sort the tightest names LAST and the cap would drop them (THERMAX case,
+    2026-07-12)."""
+    import concurrent.futures as cf
+    from backend.market_scan import _LANE_WHY
+    cand = sorted([d for d in lst if "buyzone" in d.get("lanes", [])],
+                  key=lambda d: 9 if d.get("dip_q") is None else d["dip_q"])
+    keep, overflow = cand[:50], cand[50:]
+
+    def check(d):
+        try:
+            r = _read_one(d["ticker"], mk, with_chart=False)
+            v = r.get("verdict") or {}
+            tag, hl = v.get("tag"), v.get("headline", "")
+            if tag in ("buy", "emerging"):
+                d["ready"] = "calm"
+                return True
+            if tag == "wait" and ("steady" in hl or "settle" in hl):
+                d["ready"] = "hot"                 # almost ready — amber, honest
+                return True
+            return False
+        except Exception:  # noqa: BLE001  verification is best-effort — keep on error
+            return True
+
+    with cf.ThreadPoolExecutor(max_workers=8) as ex:
+        results = list(ex.map(check, keep))
+    for d in [d for d, ok in zip(keep, results) if not ok] + overflow:
+        d["lanes"] = [l for l in d["lanes"] if l != "buyzone"]
+        d["n_lanes"] = len(d["lanes"])
+        d["why"] = _LANE_WHY.get(d["lanes"][0], "momentum") if d["lanes"] else "momentum"
+        d.pop("dip_q", None)
+    lst[:] = [d for d in lst if d["lanes"]]        # laneless rows leave the list
+
+
 def _momentum_cached(mk: str) -> list:
     """The raw momentum screen for a market, cached daily (one ~15s TradingView pass,
     no per-name deep read). Single-flight: concurrent cold hits wait on one scan instead
@@ -396,6 +441,10 @@ def _momentum_cached(mk: str) -> list:
             return hit
         lst = momentum_list(mk)
         if lst:
+            try:
+                _verify_buyzone(lst, mk)
+            except Exception as e:  # noqa: BLE001  never let verification kill the scan
+                print(f"[scan] buyzone verification failed for {mk}: {e}", flush=True)
             _put(key, lst)
         else:
             print(f"[scan] momentum_list({mk}) returned empty — NOT cached", flush=True)

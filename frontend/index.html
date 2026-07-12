@@ -559,7 +559,7 @@ async function openStrong(){
   const seq = ++strongSeq, m = market;
   lastStrong = null;   // never re-render a previous market's list while this one loads
   $("#strongTitle").textContent = `Where money’s flowing · ${ {US:"United States",IN:"India",UK:"United Kingdom"}[m]||m }`;
-  $("#strongBody").innerHTML = `<div class="center"><span class="spin"></span> Scanning the market for fresh momentum…<div class="small muted" style="margin-top:8px">The first scan each day takes ~15–20 seconds. After that it’s instant.</div></div>`;
+  $("#strongBody").innerHTML = `<div class="center"><span class="spin"></span> Scanning the market for fresh momentum…<div class="small muted" style="margin-top:8px">The first scan each day takes ~30–60 seconds (it also double-checks every Buy-zone name). After that it’s instant.</div></div>`;
   try{
     const r = await fetch(`/api/strong?market=${m}`);
     const d = await r.json();
