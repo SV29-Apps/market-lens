@@ -167,8 +167,11 @@ def snapshot(ticker: str, market_key: str) -> dict | None:
 
 
 # momentum lanes, in display priority order + a plain "why" phrase per lane.
-_LANE_ORDER = ["day", "week", "month", "newhigh", "early"]
-_LANE_WHY = {"day": "jumped today", "week": "up big this week",
+# buyzone first: when a name is both "resting at support" and e.g. "up big this month",
+# the resting fact is the actionable one.
+_LANE_ORDER = ["buyzone", "day", "week", "month", "newhigh", "early"]
+_LANE_WHY = {"buyzone": "resting at support — possible calm entry",
+             "day": "jumped today", "week": "up big this week",
              "month": "up big this month", "newhigh": "at new highs, beating the market",
              "early": "early turn — reclaimed its trend, RS rising"}
 
@@ -271,9 +274,20 @@ def momentum_list(market_key: str, cap: int = 400) -> list[dict]:
                   # so an Early candidate can never read "don't chase the jump" the same day
                   col("change") < 4, col("change") > -4],
     }
+    # buyzone — JLaw's actual entry hunt (added 2026-07-12): a PROVEN leader whose dip
+    # has already happened and which is now RESTING AT SUPPORT. Motion lanes can't see
+    # these (verified: none of the read's "Looks buyable" leaders appeared in any lane).
+    # Query keeps only the cheap structure; the leader/dip/support tests run in Python.
+    # week floor is -15, not tighter: a sharp down-week is often what CREATES the dip
+    # onto the 50-day (MRVL -12.5% week landing on its rising 50-day, 2026-07-12) —
+    # the on-support + calm-today + true-RS gates below handle genuine brokenness.
+    lanes["buyzone"] = [col("close") > col("SMA200"),
+                        col("Perf.W") < p["wk"], col("Perf.W") > -15,
+                        col("change") < 4, col("change") > -4]         # calm today
+
     near_factor = 1 - p["near_high"] / 100.0
     cols = ["name", "description", "close", "change", "Perf.W", "Perf.1M", "Perf.3M",
-            "Perf.6M", "SMA50", "relative_volume_10d_calc",
+            "Perf.6M", "SMA20", "SMA50", "ATR", "relative_volume_10d_calc",
             "price_52_week_high", "market_cap_basic", "sector", "industry"]
 
     merged: dict[str, dict] = {}
@@ -289,7 +303,8 @@ def momentum_list(market_key: str, cap: int = 400) -> list[dict]:
             continue
         for _, r in df.iterrows():
             c = _num(r.get("close")); hi = _num(r.get("price_52_week_high"))
-            sma50 = _num(r.get("SMA50"))
+            sma20 = _num(r.get("SMA20")); sma50 = _num(r.get("SMA50"))
+            atr = _num(r.get("ATR"))
             p1 = _num(r.get("Perf.1M")); p3 = _num(r.get("Perf.3M")); p6 = _num(r.get("Perf.6M"))
             # the REAL liquidity floor: 10-day-average turnover (avg volume × close) —
             # stable all day, unlike the session's cumulative Value.Traded.
@@ -322,33 +337,68 @@ def momentum_list(market_key: str, cap: int = 400) -> list[dict]:
                 # the two data sources (TradingView here, Yahoo in the read).
                 if bench["m6"] is not None and p6 is not None and p6 > bench["m6"] - 2:
                     continue
+            elif lane == "buyzone":
+                if not (c and hi and atr and sma50):
+                    continue
+                # a PROVEN leader (true RS over 3 & 6 months, like the newhigh lane)
+                if bench["m3"] is not None and not (p3 is not None and p3 > bench["m3"]):
+                    continue
+                if bench["m6"] is not None and not (p6 is not None and p6 > bench["m6"]):
+                    continue
+                if c > hi * 0.95:                          # the dip hasn't happened yet
+                    continue
+                # resting ON support, not hanging under it: must be above at least one
+                # of the two lines. Without this, a WEAK name below BOTH its 20- and
+                # 50-day can sit "within 1 ATR" of the 50 from BENEATH (LSCC/NXPI case,
+                # 2026-07-12). No max-depth floor: a deep-but-healthy pullback (MRVL,
+                # ~28% off its high with rising RS) is exactly what JLaw wants to catch;
+                # the true-RS + above-200-day + on-support tests handle brokenness.
+                if not ((sma20 and c >= sma20) or c >= sma50):
+                    continue
+                d20 = abs(c - sma20) / atr if sma20 else 99.0
+                d50 = abs(c - sma50) / atr
+                if min(d20, d50) > 1.0:                    # sitting within 1 ATR of support
+                    continue
+                bz_why = ("resting near its 20-day line" if d20 <= d50
+                          else "resting near its 50-day line")
+                bz_q = round(min(d20, d50), 2)
             tk = str(r["name"])
             d = merged.get(tk)
             if d is None:
                 close = c or 0.0
                 if p["cur"] == "£":
                     close = close / 100.0        # LSE quotes in pence -> pounds for display
+                chg = _num(r.get("change"))
+                # readiness dot (same graded ATR scale as the read): amber "hot" when
+                # stretched >4 ATRs above the 50-day or when today moved >±4%.
+                hot = bool((atr and sma50 and c and (c - sma50) / atr > 4)
+                           or (chg is not None and abs(chg) > 4))
                 d = merged[tk] = {
                     "ticker": tk,
                     "name": str(r.get("description") or tk),
                     "market": market_key.strip().upper(),
                     "price_str": f"{p['cur']}{round(close):,}",
                     "rvol": _num(r.get("relative_volume_10d_calc")),
+                    "ready": "hot" if hot else "calm",
                     "sector": friendly_sector(r.get("sector"), r.get("industry"), tk),
                     "raw_sector": str(r.get("sector") or ""),
                     "industry": str(r.get("industry") or ""),
                     "perf_w": _num(r.get("Perf.W")), "perf_m": p1,
-                    "change": _num(r.get("change")),
+                    "change": chg,
                     "lanes": set(),
                 }
             d["lanes"].add(lane)
+            if lane == "buyzone":
+                d["dip_q"] = bz_q          # distance to support in ATRs (sort key)
+                d["bz_why"] = bz_why
 
     out = []
     for d in merged.values():
         lanes_sorted = [l for l in _LANE_ORDER if l in d["lanes"]]
         d["lanes"] = lanes_sorted
         d["n_lanes"] = len(lanes_sorted)
-        d["why"] = _LANE_WHY.get(lanes_sorted[0], "momentum") if lanes_sorted else "momentum"
+        d["why"] = (d.get("bz_why") if "buyzone" in d["lanes"] else None) \
+            or (_LANE_WHY.get(lanes_sorted[0], "momentum") if lanes_sorted else "momentum")
         out.append(d)
     # strongest signal first: most lanes, then biggest monthly move (Sanat's ranking).
     out.sort(key=lambda x: (x["n_lanes"], x["perf_m"] or -999), reverse=True)

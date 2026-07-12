@@ -58,6 +58,10 @@
   .lr-price{font-size:14px;color:var(--ink2);white-space:nowrap;font-weight:500}
   @media (max-width:640px){ .lr-mid{max-width:44%;font-size:11px} }
   /* strong-screen header + filter */
+  .mktstrip{display:flex;gap:8px;align-items:center;border-radius:var(--radius-sm);
+    padding:9px 13px;margin:8px 0 4px;font-size:13px;line-height:1.5}
+  .dotkey{display:flex;gap:16px;margin:2px 0 8px;font-size:11.5px;color:var(--ink2)}
+  .dotkey span{display:flex;align-items:center;gap:6px}
   .strongsum{font-size:15px;color:var(--ink);line-height:1.55;margin:8px 0 14px}
   .strongsum b{font-weight:700}
   .filterbar{display:flex;gap:10px;align-items:center;margin:6px 0 12px;flex-wrap:wrap}
@@ -186,17 +190,21 @@
   <section id="s-strong" class="hidden">
     <button class="back" onclick="show('search')">‹ back</button>
     <div class="row"><h1 style="font-size:20px" id="strongTitle">Where money’s flowing</h1></div>
+    <div id="mktStrip" class="mktstrip hidden"></div>
     <div class="strongsum" id="strongSummary"></div>
     <div class="pills" id="strongToggle" style="margin:2px 0 8px;flex-wrap:wrap">
-      <button class="pill on" data-v="fast">Fast movers</button>
-      <button class="pill" data-v="quiet">Quiet leaders</button>
+      <button class="pill on" data-v="buyzone">Buy zone</button>
       <button class="pill" data-v="early">Early</button>
-      <button class="pill" data-v="sector">By sector</button>
+      <button class="pill" data-v="quiet">Quiet leaders</button>
+      <button class="pill" data-v="fast">Fast movers</button>
+      <button class="pill" id="secToggle" style="margin-left:auto">By sector: off</button>
     </div>
     <div class="filterbar">
       <input id="strongSearch" type="text" placeholder="Search a stock — name or ticker…" autocomplete="off" spellcheck="false">
       <span class="matchcount" id="strongCount"></span>
     </div>
+    <div class="dotkey"><span><i class="dot d-green"></i>at a calm spot</span>
+      <span><i class="dot d-amber"></i>extended or moving hard — wait for a dip</span></div>
     <div id="strongBody" style="margin-top:4px"></div>
   </section>
 
@@ -561,8 +569,9 @@ async function openStrong(){
   }catch(e){ if(seq === strongSeq) $("#strongBody").innerHTML = `<div class="center">Something went wrong. Try again.</div>`; }
 }
 
-let lastStrong = null;    // the most recent /api/strong response
-let strongView = "fast";  // "fast" | "quiet" | "early" | "sector"
+let lastStrong = null;      // the most recent /api/strong response
+let strongView = "buyzone"; // "buyzone" | "early" | "quiet" | "fast"
+let sectorGroup = false;    // "By sector" toggle — groups WHATEVER tab is active
 
 let strongQuery = "";     // live search filter (ticker or name)
 
@@ -570,7 +579,11 @@ let strongQuery = "";     // live search filter (ticker or name)
 const LANE_TXT = {day:"jumped today", week:"up big this week", month:"up big this month",
                   newhigh:"at new highs", early:"early turn — RS rising"};
 function whyText(it){
-  const parts = (it.lanes||[]).map(l=>LANE_TXT[l]).filter(Boolean);
+  const lanes = it.lanes||[];
+  // buyzone rows lead with their specific resting note ("resting near its 50-day line")
+  const parts = lanes.includes("buyzone")
+    ? [it.why, ...lanes.filter(l=>l!=="buyzone").map(l=>LANE_TXT[l]).filter(Boolean)]
+    : lanes.map(l=>LANE_TXT[l]).filter(Boolean);
   let s = parts.slice(0,2).join(" · ") || (it.why||"momentum");
   if(it.perf_m!=null){ const v=Math.round(it.perf_m); s += ` · ${v>0?'+':''}${v}% this month`; }
   return s;
@@ -585,8 +598,9 @@ function momRow(it, showSec){
   // #2: the "why" sits inline right after the name. showSec=false in the grouped view
   // (the group header already shows Sector › Industry, so it's redundant per row).
   const mid = showSec ? `<div class="lr-mid">${esc(secText(it))}</div>` : "";
+  const dot = it.ready ? `<i class="dot ${it.ready==="hot"?"d-amber":"d-green"}" style="flex:none;margin-right:2px"></i>` : "";
   return `<div class="listrow" data-ticker="${esc(it.ticker)}" data-market="${esc(it.market||'')}">
-      <div class="lr-left">
+      <div class="lr-left" style="display:flex;align-items:center;gap:8px">${dot}
         <div class="lr-name">${esc(it.name)}<span class="tkr">${esc(tkShort(it.ticker))}</span><span class="lr-why">${esc(whyText(it))}</span></div>
       </div>
       ${mid}
@@ -596,16 +610,19 @@ function momRow(it, showSec){
 
 // which names belong in the current tab (by the lane[s] they passed)
 const FAST_LANES = ["day", "week", "month"];
-function viewItems(d){
+function laneItems(d, v){
   const all = d.top || [];
-  if(strongView==="quiet")  return all.filter(it=>(it.lanes||[]).includes("newhigh"));
-  if(strongView==="early")  // volume RANKS an early turn (JLaw: quiet accumulation = the
-                            // institutional footprint) — busiest names float to the top.
+  if(v==="buyzone") // tightest to support first — the most "built" setup on top
+    return all.filter(it=>(it.lanes||[]).includes("buyzone"))
+              .sort((a,b)=>(a.dip_q??9)-(b.dip_q??9));
+  if(v==="quiet")  return all.filter(it=>(it.lanes||[]).includes("newhigh"));
+  if(v==="early")  // volume RANKS an early turn (JLaw: quiet accumulation = the
+                   // institutional footprint) — busiest names float to the top.
     return all.filter(it=>(it.lanes||[]).includes("early"))
               .sort((a,b)=>(b.rvol||0)-(a.rvol||0));
-  if(strongView==="fast")   return all.filter(it=>(it.lanes||[]).some(l=>FAST_LANES.includes(l)));
-  return all;   // "sector" — all names, grouped below
+  return all.filter(it=>(it.lanes||[]).some(l=>FAST_LANES.includes(l)));   // fast
 }
+function viewItems(d){ return laneItems(d, strongView); }
 
 function flatCard(items){
   const its = items.filter(matchesQ);
@@ -640,29 +657,54 @@ function toggleSector(btn){
 }
 
 const VIEW_INTRO = {
-  fast:  "Fast movers — up big this week, month or today. Tap any for its full read.",
-  quiet: "Quiet leaders — steady at new highs and beating the market. Tap any for its full read.",
+  buyzone:"Leaders that pulled back to support and are steadying — <b>where a calm entry may exist today</b>. Open one for its full read.",
   early: "Possible early turns — reclaiming their trend on rising volume. These are <b>candidates to check on the chart</b>, not confirmed — open one for its full read.",
-  sector:"Grouped by sector → industry (where money is clustering). Tap any for its full read.",
+  quiet: "Quiet leaders — the watchlist: the strongest names at their highs. <b>Buy their next calm dip (see Buy zone), not the high.</b>",
+  fast:  "Fast movers — where the action is, usually <b>not</b> where the entry is. Tap any for its full read.",
 };
+const VIEW_LABEL = {buyzone:"Buy zone", early:"Early", quiet:"Quiet leaders", fast:"Fast movers"};
+
+// the market strip — the regime in plain words (never the Risk-On/Off jargon)
+function stripHtml(regime){
+  const map = {
+    "Risk-On":  {cls:"a-green", txt:"Market check: healthy — good hunting. Trend is supportive."},
+    "Neutral":  {cls:"a-amber", txt:"Market check: so-so — be choosy. Fewer, better trades."},
+    "Risk-Off": {cls:"a-red",   txt:"Market check: weak — go slow. Protecting money comes first."},
+  }[regime];
+  return map ? {cls:map.cls, txt:map.txt} : null;
+}
 
 function renderStrongView(){
   const d = lastStrong; if(!d) return;
   const items = viewItems(d);
   $("#strongSummary").innerHTML = VIEW_INTRO[strongView] || "";
-  $("#strongBody").innerHTML = strongView==="sector" ? sectorBoxes(items) : flatCard(items);
+  $("#strongBody").innerHTML = sectorGroup ? sectorBoxes(items) : flatCard(items);
   const shown = items.filter(matchesQ).length;
   $("#strongCount").textContent = strongQuery
     ? `${shown} match${shown===1?'':'es'}`
     : `${items.length} name${items.length===1?'':'s'}`;
+  // counts on the tab pills — the market's mood at a glance
+  document.querySelectorAll("#strongToggle .pill[data-v]").forEach(b=>{
+    const v = b.dataset.v;
+    b.textContent = `${VIEW_LABEL[v]} · ${laneItems(d, v).length}`;
+  });
+  const st = stripHtml(d.regime), el = $("#mktStrip");
+  if(st){ el.className = `mktstrip ${st.cls}`; el.textContent = st.txt; }
+  else el.className = "mktstrip hidden";
 }
 
 function renderStrong(d){ lastStrong = d; renderStrongView(); }
 
-// view toggle (Top movers / By sector)
-document.querySelectorAll("#strongToggle .pill").forEach(b=>{
+// "By sector" grouping toggle — applies to whichever tab is active
+(() => { const t = document.getElementById("secToggle");
+  if(t) t.addEventListener("click", ()=>{ sectorGroup = !sectorGroup;
+    t.textContent = `By sector: ${sectorGroup?"on":"off"}`;
+    t.classList.toggle("on", sectorGroup); renderStrongView(); }); })();
+
+// tab pills (scoped to [data-v] so the By-sector toggle keeps its own handler/state)
+document.querySelectorAll("#strongToggle .pill[data-v]").forEach(b=>{
   b.addEventListener("click",()=>{
-    document.querySelectorAll("#strongToggle .pill").forEach(x=>x.classList.remove("on"));
+    document.querySelectorAll("#strongToggle .pill[data-v]").forEach(x=>x.classList.remove("on"));
     b.classList.add("on"); strongView=b.dataset.v; renderStrongView();
   });
 });

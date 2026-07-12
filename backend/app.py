@@ -377,7 +377,7 @@ def _mom_item(d: dict) -> dict:
             "industry": d.get("industry") or "", "raw_sector": d.get("raw_sector") or "",
             "lanes": d["lanes"], "why": d["why"], "n_lanes": d["n_lanes"],
             "perf_w": d.get("perf_w"), "perf_m": d.get("perf_m"),
-            "rvol": d.get("rvol")}
+            "rvol": d.get("rvol"), "ready": d.get("ready"), "dip_q": d.get("dip_q")}
 
 
 def _momentum_cached(mk: str) -> list:
@@ -402,6 +402,24 @@ def _momentum_cached(mk: str) -> list:
         return lst
 
 
+def _regime_cached(mk: str) -> str | None:
+    """The market's Risk-On/Neutral/Risk-Off read for the strip, daily-cached.
+    Shown to the user only as plain words (healthy / so-so / weak)."""
+    key = f"regime:{mk}"
+    hit = _cached(key)
+    if hit is not None:
+        return hit or None
+    bench = {"US": "^GSPC", "IN": "^NSEI", "UK": "^FTSE"}.get(mk)
+    reg = ""
+    try:
+        bm = J.broad_market(bench) if bench else {}
+        reg = bm.get("regime") or ""
+    except Exception:  # noqa: BLE001  strip is best-effort
+        reg = ""
+    _put(key, reg)
+    return reg or None
+
+
 @app.get("/api/strong")
 def strong(market: str = "US", n: int = 0):
     """The 'Strong right now' MOMENTUM SCREENER — where money is flowing now (fresh
@@ -412,9 +430,10 @@ def strong(market: str = "US", n: int = 0):
     if mk not in _ENABLED:
         mk = _ENABLED[0]
     lst = _momentum_cached(mk)
+    regime = _regime_cached(mk)
     if not lst:
         return {"ok": True, "market": mk, "scanned": False, "count": 0,
-                "sectors": [], "top": [],
+                "sectors": [], "top": [], "regime": regime,
                 "note": "Couldn't reach the market scanner just now — try again shortly."}
 
     # n>0 = light teaser (top n); full list = ALL names (uncapped), ranked strongest-first.
@@ -422,15 +441,10 @@ def strong(market: str = "US", n: int = 0):
     note = f"{len(lst)} names with fresh momentum right now — where money is flowing."
     if n and n > 0:                                   # teaser: light payload, no grouping
         return {"ok": True, "market": mk, "scanned": True, "count": len(lst),
-                "top": top, "note": note}
+                "top": top, "note": note, "regime": regime}
 
-    groups: dict[str, list] = {}
-    for d in lst:
-        groups.setdefault(d["sector"], []).append(_mom_item(d))
-    sectors = [{"name": s, "count": len(v), "items": v} for s, v in groups.items()]
-    sectors.sort(key=lambda x: x["count"], reverse=True)   # biggest money-flow first
     return {"ok": True, "market": mk, "scanned": True, "count": len(lst),
-            "top": top, "sectors": sectors, "note": note}
+            "top": top, "note": note, "regime": regime}
 
 
 # serve the UI (mounted last so /api/* wins). The single-page app is served with
