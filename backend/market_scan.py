@@ -355,6 +355,16 @@ def momentum_list(market_key: str, cap: int = 400) -> list[dict]:
                 # the true-RS + above-200-day + on-support tests handle brokenness.
                 if not ((sma20 and c >= sma20) or c >= sma50):
                     continue
+                # not EXTENDED vs the 50-day either: after a fast run the 20-day rides
+                # right under the price while the 50-day lags far below, so a name can
+                # be "resting near its 20-day" AND parabolic vs its 50-day at once —
+                # the read would say "don't chase" (ROKU case, 2026-07-12). THRESHOLD
+                # NOTE: TradingView's ATR reads ~1.6x larger than the engine's Yahoo
+                # atr14 (ROKU: 3.53 vs 2.22 on identical price/MA), so the read's
+                # 4.0-ATR bar ≈ 2.5 in TV units — calibrated to PREDICT the read,
+                # erring conservative (false negatives beat "buy-zone name says don't chase").
+                if (c - sma50) / atr > 2.5:
+                    continue
                 d20 = abs(c - sma20) / atr if sma20 else 99.0
                 d50 = abs(c - sma50) / atr
                 if min(d20, d50) > 1.0:                    # sitting within 1 ATR of support
@@ -369,10 +379,14 @@ def momentum_list(market_key: str, cap: int = 400) -> list[dict]:
                 if p["cur"] == "£":
                     close = close / 100.0        # LSE quotes in pence -> pounds for display
                 chg = _num(r.get("change"))
-                # readiness dot (same graded ATR scale as the read): amber "hot" when
-                # stretched >4 ATRs above the 50-day or when today moved >±4%.
-                hot = bool((atr and sma50 and c and (c - sma50) / atr > 4)
-                           or (chg is not None and abs(chg) > 4))
+                # readiness dot — GREEN only when the read is unlikely to say "don't
+                # chase": not stretched vs the 50-day (2.5 TV-ATRs ≈ the read's 4.0
+                # Yahoo-ATRs — TV's ATR reads ~1.6x larger, see the buyzone gate note),
+                # no ±4% day, and NOT near the 1-year high (the read's third chase
+                # trigger — NBIX case 2026-07-12: green dot at new highs, read said wait).
+                hot = bool((atr and sma50 and c and (c - sma50) / atr > 2.5)
+                           or (chg is not None and abs(chg) > 4)
+                           or (hi and c and c >= hi * 0.95))
                 d = merged[tk] = {
                     "ticker": tk,
                     "name": str(r.get("description") or tk),
