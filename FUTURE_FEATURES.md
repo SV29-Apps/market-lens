@@ -196,3 +196,34 @@ card on the read page that assembles the momentum verdict into one scannable blo
 
 - **Weak / short-watch list** — a separate view of the weakest names (for advanced users).
   Deliberately left out of the beginner app to avoid nudging toward shorting. *(Parked.)*
+
+---
+
+## Screener rework — DONE (2026-07-12)
+
+User-reported gap, verified live: the momentum lanes select for MOTION while JLaw buys
+REST — none of the read's "Looks buyable" leaders (MRVL/ARM/KLAC/LRCX/PANW/ALAB/CRDO
+that day) appeared in ANY lane. Shipped (commit 6f2bb8c):
+
+- **Buy-zone lane + default tab** — a proven leader (true-RS vs the index over 3 & 6
+  months, above the 200-day) whose dip has HAPPENED (≥5% below the 52-week high, week
+  floor −15% since a sharp down-week often *creates* the dip), now RESTING ON support
+  (above at least one of the 20/50-day, within 1 ATR of one of them — TradingView `ATR`
+  + `SMA20` added to the scan), calm today (|change| < 4%). Item carries `dip_q`
+  (ATR-distance to support; tab sorts tightest-first) + "resting near its 20/50-day
+  line" why-text. Cross-engine validated: 9/10 top candidates read "Looks buyable",
+  1 "wait to steady", 0 weak. Gate lessons: must be ON support, not within-1-ATR from
+  BENEATH (LSCC/NXPI leak); no max-depth floor (MRVL −28% off-high healthy dip).
+- **Readiness dot on every row** in every tab (green "calm spot" / amber = >4 ATRs
+  above the 50-day OR |today| > 4%) + legend — actionable names stand out even inside
+  Fast movers.
+- **Tabs reordered by actionability** with live counts: Buy zone (default) · Early ·
+  Quiet leaders · Fast movers. "By sector" is now a **toggle** that groups whichever
+  tab is active (was its own tab). Intros reframed: Quiet leaders = the watchlist (buy
+  their next dip, not the high); Fast movers = awareness, usually not entries.
+- **Market strip** on the screener: regime in plain words (healthy — good hunting /
+  so-so — be choosy / weak — go slow), from `_regime_cached` per market. Never shows
+  Risk-On/Off jargon or "JLaw".
+
+Still parked from this line of work: a dedicated "tightening / base-building" rank
+(volatility-contraction ordering inside Buy zone), and the weak/short list above.
