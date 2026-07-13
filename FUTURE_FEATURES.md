@@ -227,3 +227,28 @@ that day) appeared in ANY lane. Shipped (commit 6f2bb8c):
 
 Still parked from this line of work: a dedicated "tightening / base-building" rank
 (volatility-contraction ordering inside Buy zone), and the weak/short list above.
+
+---
+
+## Kite live layer (India) — DONE (2026-07-13) + PENDING DECISIONS
+
+**DONE (commit 1437841):** optional live-NSE layer via the user's gold-study Kite app
+(`backend/kite_live.py`; token = user's daily morning login). When live: LIVE badge +
+live price/% on IN reads (10-min cache buckets), time-of-day-honest volume check, live
+row %s on the India list, live Nifty on the market strip. ANY failure (no token, lapsed
+subscription — expected in ~2 months, missing lib) → silent byte-identical Yahoo
+fallback; Render always runs the fallback (kiteconnect deliberately NOT in
+requirements-prod). Verdicts never consume Kite data — freshness only.
+
+**PENDING DECISIONS (offered to the user 2026-07-13, unanswered):**
+- Wire "heavy selling on a down day" into the verdict (PENG showed "Looks buyable"
+  beside a red heavy-selling check; currently informational by design).
+- Extend read-engine verification to the readiness dots of the Early/Quiet/Fast tabs
+  (~+30–60s on the day's first scan) vs accepting conservative amber-on-buyable
+  errors (TWST case; recommendation was to accept).
+- Wikipedia-fallback one-liner for companies without a page ("A mid-size Electrical
+  Products company on the NSE") so the about-line never comes up empty.
+
+**PENDING (bigger): ⭐ Render deploy** — local is ~15 commits ahead of origin; waiting
+only on the user's go. Post-push checks: 401 auth, UK pill absent, one read, screener
+tabs, health. Prod stays Yahoo-only (no Kite, news off).
