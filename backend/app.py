@@ -23,7 +23,8 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from backend import jlaw_data_core as J
-from backend.plain_read import build_plain_read
+from backend import kite_live
+from backend.plain_read import build_plain_read, _money
 from backend.market_scan import strongest_list, momentum_list
 
 HERE = os.path.dirname(__file__)
@@ -190,6 +191,31 @@ def _about_for(name: str) -> str | None:
     return out or None
 
 
+def _kite_overlay(bundle: dict) -> dict | None:
+    """Live Kite freshness for an INDIAN read (optional — see kite_live.py). Adjusts
+    the bundle's volume ratio to 'vs the normal pace for this time of day' (the honest
+    version of the quiet/heavy check) and returns {price, pct_1d} for the header.
+    None whenever Kite is unavailable — the read is then byte-identical to the free
+    route, which is also the permanent state on Render."""
+    try:
+        f = bundle.get("features") or {}
+        sym = (bundle.get("resolved") or {}).get("symbol", "")
+        base = sym.split(".")[0]
+        if not base or not kite_live.available():
+            return None
+        q = kite_live.quotes([base]).get(base)
+        if not q:
+            return None
+        vol = (f.get("daily") or {}).get("volume") or {}
+        if vol.get("avg50") and q.get("volume"):
+            frac = kite_live.session_fraction()
+            vol["ratio_vs_avg50"] = round(q["volume"] / (vol["avg50"] * frac), 2)
+            vol["live_adjusted"] = True
+        return {"price": q["price"], "pct_1d": q["pct_1d"]}
+    except Exception:  # noqa: BLE001  live layer is best-effort, always
+        return None
+
+
 def _read_one(ticker: str, market: str | None, with_chart: bool = True) -> dict:
     """Engine + plain-language read for one ticker. Adds a small price line for the
     chart unless with_chart=False (list items skip it to save a network call).
@@ -199,12 +225,18 @@ def _read_one(ticker: str, market: str | None, with_chart: bool = True) -> dict:
     # list path (no chart) skips the weekly fetch — the read ignores it, so the tag is
     # unchanged, but it's one fewer Yahoo request per name across the ~300-name scan.
     bundle = _screen_resolved(ticker, market, light=not with_chart)
+    live = None
+    if (market or "").strip().upper() == "IN":
+        live = _kite_overlay(bundle)
     news = None
     if with_chart:
         sym = (bundle.get("resolved") or {}).get("symbol")
         if sym:
             news = _news_for(sym)
     read = build_plain_read(bundle, news=news)
+    if read.get("ok") and live:
+        read["live"] = {"price_str": _money(live["price"], read.get("currency")),
+                        "pct_1d": round(live["pct_1d"], 1)}
     if with_chart and read.get("ok") and read.get("symbol"):
         try:
             read["chart"] = _chart_payload(read["symbol"], bundle)
@@ -356,6 +388,12 @@ def read(ticker: str, market: str = ""):
     mk = market.strip().upper()
     mk = mk if mk in _MARKETS else ""          # validate BEFORE it becomes a cache key
     key = f"read:{ticker.upper()}:{mk}"
+    if mk == "IN":
+        try:  # with Kite live, an Indian read stays fresh in ~10-min buckets instead
+            if kite_live.available():          # of all-day (price/volume move intraday)
+                key += f":live{int(time.time() // 600)}"
+        except Exception:  # noqa: BLE001
+            pass
     cached = _cached(key)
     if cached is not None:
         return cached
@@ -487,13 +525,26 @@ def strong(market: str = "US", n: int = 0):
 
     # n>0 = light teaser (top n); full list = ALL names (uncapped), ranked strongest-first.
     top = [_mom_item(d) for d in (lst[:n] if n and n > 0 else lst)]
+    nifty_live = None
+    if mk == "IN":
+        try:  # live Kite overlay: fresh prices + today's % on every row (one bulk call)
+            if kite_live.available():
+                qs = kite_live.quotes([it["ticker"] for it in top])
+                for it in top:
+                    q = qs.get(it["ticker"])
+                    if q:
+                        it["price_str"] = _money(q["price"], "INR")
+                        it["live_pct"] = q["pct_1d"]
+                nifty_live = kite_live.nifty_pct()
+        except Exception:  # noqa: BLE001  live layer is best-effort
+            pass
     note = f"{len(lst)} names with fresh momentum right now — where money is flowing."
     if n and n > 0:                                   # teaser: light payload, no grouping
         return {"ok": True, "market": mk, "scanned": True, "count": len(lst),
-                "top": top, "note": note, "regime": regime}
+                "top": top, "note": note, "regime": regime, "nifty_live_pct": nifty_live}
 
     return {"ok": True, "market": mk, "scanned": True, "count": len(lst),
-            "top": top, "note": note, "regime": regime}
+            "top": top, "note": note, "regime": regime, "nifty_live_pct": nifty_live}
 
 
 # serve the UI (mounted last so /api/* wins). The single-page app is served with

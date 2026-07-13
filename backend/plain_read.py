@@ -261,7 +261,8 @@ def build_plain_read(bundle: dict, news: dict | None = None) -> dict:
         "action": action,
         "detail": _detail(currency, tag, over_extended, extended, vol_ratio, rs_rising,
                           ex_1m, ex_6m, pct_1d, price, eff_target, target_kind,
-                          buy_level, eff_stop),
+                          buy_level, eff_stop,
+                          live_vol=bool(_g(f, "daily", "volume", "live_adjusted"))),
         "supports": supports,
         "news": news_lens,
         "signals": signals,
@@ -559,7 +560,7 @@ def _patterns(last_candle, recent_gaps, above50, strong_rs, regime, pct_1d, tag,
 
 
 def _detail(currency, tag, over_extended, extended, vol_ratio, rs_rising, ex_1m, ex_6m,
-            pct_1d, price, target_val, target_kind, buy_level, stop):
+            pct_1d, price, target_val, target_kind, buy_level, stop, live_vol=False):
     """The read's inline detail: a target plus three plain 'setup' checks. Each check
     is THREE-STATE — good / watch / bad — not a pass/fail tick, because some factors
     (notably volume) are context-dependent, not simply good or bad.
@@ -572,6 +573,9 @@ def _detail(currency, tag, over_extended, extended, vol_ratio, rs_rising, ex_1m,
     heavy = vol_ratio is not None and vol_ratio >= 1.3
     quiet = vol_ratio is not None and vol_ratio < 1.0
     up = (pct_1d or 0) > 0
+    # live_vol: the ratio was time-adjusted from LIVE data ("vs the normal pace for
+    # this time of day") — say so, it's the honest version of this check (Kite, IN).
+    tod = " for this time of day" if live_vol else ""
 
     # Same graded ATR scale as the verdict (4 = stretched, 7 = parabolic), so this dot
     # can never say "not over-extended" under a "don't chase — it has run up" verdict.
@@ -583,18 +587,19 @@ def _detail(currency, tag, over_extended, extended, vol_ratio, rs_rising, ex_1m,
         c1 = {"state": "good", "label": "Not over-extended"}
 
     if heavy and not up:
-        c2 = {"state": "bad", "label": "Heavy selling right now"}
+        c2 = {"state": "bad", "label": f"Heavy selling{tod or ' right now'}"}
     elif heavy and up:
-        c2 = {"state": "good", "label": "Strong buying — heavy volume, price up"}
+        c2 = {"state": "good", "label": f"Strong buying — heavy volume{tod}, price up"}
     elif quiet and (pct_1d or 0) < -4:
         # a >4% down day is not "calm" whatever the volume ratio says — intraday the
         # session's volume is still filling up, so "quiet" can be an artifact (MDB
         # case, 2026-07-11: -5.7% day labelled "Calm pullback — quiet selling").
         c2 = {"state": "watch", "label": "Sharp down day — let it settle"}
     elif quiet:
-        c2 = {"state": "good", "label": "Calm pullback — quiet selling"}
+        c2 = {"state": "good", "label": ("Selling is quiet for this time of day"
+                                         if live_vol else "Calm pullback — quiet selling")}
     else:
-        c2 = {"state": "good", "label": "Trading is calm"}
+        c2 = {"state": "good", "label": f"Trading is calm{tod}"}
 
     # Relative strength — judged over a MEANINGFUL horizon (6 months), not just the
     # RS line's recent wiggle, so it stays consistent with the "is it a leader?" verdict.
