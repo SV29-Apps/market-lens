@@ -22,14 +22,17 @@ def _sym(currency: str) -> str:
 
 
 def _money(v, currency: str) -> str:
-    """Plain price string, rounded to whole units (beginners don't need paise/cents).
-    London (LSE) quotes come in PENCE (currency 'GBp'), so convert to pounds."""
+    """Plain price string. Whole units for normal prices, but 2 DECIMALS under 10 units —
+    a £3.87 stock rounded to "£4" makes the buy and the exit collapse to the same number
+    and hides ~15% of the real risk (audit #4, 2026-07-17; this is the same rule the
+    frontend's fmtMoney already had — it was never ported here, so the two drifted).
+    London (LSE) quotes come in PENCE (currency 'GBp'), so convert to pounds first."""
     if v is None or v != v:          # None or NaN
         return "—"
     if currency == "GBp":
         v = v / 100.0
     s = _sym(currency)
-    return f"{s}{round(v):,}"
+    return f"{s}{v:.2f}" if abs(v) < 10 else f"{s}{round(v):,}"
 
 
 def _pct(v) -> str:
@@ -102,20 +105,55 @@ def build_plain_read(bundle: dict, news: dict | None = None) -> dict:
     # ---- signals (all best-effort; treat missing as neutral) ----
     above50 = (v_ma50 or 0) > 0
     above20 = (v_ma20 or 0) > 0
-    above200 = (v_ma200 or 0) > 0
+    # TRI-STATE (audit M4): a stock with < 200 bars of history has NO 200-day line, so
+    # v_ma200 is None. Treating None as "below the 200-day" wrongly bars a young name from
+    # the leader tier and forces the weak cell to the harsher red "avoid". Keep it None =
+    # "unknown" and let the rules that care require `is False` / `is True` explicitly.
+    above200 = None if v_ma200 is None else (v_ma200 > 0)
     # An ESTABLISHED leader must be ahead over 6 months by more than a rounding error
     # (> 2 pts, not > 0): a name ahead by +0.1% is statistical noise, and blind judges
     # + the screener's independent data source both read such names as EARLY turns,
     # not proven leaders (AMBA case, 2026-07-11). Hairline names fall to the emerging
     # tier, which fits them better (starter-size, higher-risk framing).
     strong_rs = (ex_3m or 0) > 0 and (ex_6m or 0) > 2
-    near_high = (pct_from_high or -99) > -5                    # within 5% of the 1-year high
+    # within 5% of the 1-year high. NOTE: `pct_from_high` is 0.0 for a stock AT its high,
+    # and 0.0 is FALSY — an `(x or -99)` here would swallow it and read the single most
+    # extended state as "not near its high" -> a GREEN buy at the exact top (audit #1,
+    # 2026-07-17). Test for None explicitly; never let a meaningful 0 fall through an `or`.
+    near_high = pct_from_high is not None and pct_from_high > -5
     just_popped = pct_1d > 4
     # the MIRROR of just_popped (added 2026-07-11, MDB case): a big DOWN day is
     # "mid-fall", not a calm entry — JLaw buys when it STEADIES. Same 4% bar the
     # screener's Early lane uses to exclude dumping names, so list and read agree.
     just_dumped = pct_1d < -4
+    # THE READ'S MEMORY (2026-07-18, "give the app memory"). Two facts from the recent
+    # past — see jlaw_data_core._trend_memory. worst_drop_3d covers TODAY's bar too, so
+    # recent_shock is a strict superset of just_dumped: a >4% down day any time in the
+    # last 3 sessions means this is not a calm spot yet (the NTAP case — its -7.1% shock
+    # was one day back and the old 1-day gate read it green "leader resting").
+    mem = _g(f, "daily", "trend_memory", default={}) or {}
+    days_b50 = mem.get("days_below_50")
+    worst3 = mem.get("worst_drop_3d")
+    recent_shock = (worst3 is not None and worst3 < -4) or just_dumped
     weak_now = (not above20 and not above50) and ((ex_1m or 0) < 0 or rs_falling)
+    # STRUCTURAL WEAK (added 2026-07-15, TEAM/CRM from the 15-Jul Midweek Pulse):
+    # JLaw calls a name "weak structure" when it sits below its LONG-TERM trend
+    # (the 200-day) and keeps losing to the market — even if a short bounce has
+    # lifted it back above its 20-day, so the "below its 20 AND 50-day" gate above
+    # misses it. Require below BOTH the 50- and 200-day + a falling RS line + a big
+    # 6-month shortfall (ex_6m < -20) so this can ONLY fire on a genuinely broken
+    # laggard: a real leader in a dip is always well ABOVE its 200-day and can never
+    # trip it. Without this, TEAM/CRM (~20% below the 200-day, RS falling, 6-month
+    # excess -47/-44) fell to "mixed" (no-edge) instead of weak.
+    if (not above50 and above200 is False) and rs_falling and (ex_6m or 0) < -20:
+        weak_now = True   # `is False` not `not above200` — an unknown 200-day (young name,
+        #                   above200 is None) must NOT be assumed broken (audit M4)
+    # RECLAIM WINDOW (2026-07-18): JLaw gives a name ~4-6 trading days below its 50-day
+    # to climb back above. Past the window, unreclaimed = the market has answered — the
+    # name reads firmly weak even if a bounce keeps its short-term signals mixed. (1-3
+    # days below stays a soft "just slipped" wait — see _cell_reclaim.)
+    if days_b50 is not None and days_b50 > 6:
+        weak_now = True
 
     # "Extended" the JLaw way = stretched above the 50-day in ATR (volatility) terms,
     # NOT a flat % (READ_LOGIC: "JLaw measures 'extended' in ATR terms"). ONE graded
@@ -175,28 +213,46 @@ def build_plain_read(bundle: dict, news: dict | None = None) -> dict:
     if deep_fade:
         phase = "deep_fade"
     elif (not above20 and rs_falling) or just_dumped:
-        phase = "sliding"          # still going down (trend-sliding OR a >4% down day)
+        phase = "sliding"          # still going down (trend-sliding OR a >4% down day
+        #                            TODAY — a bounce/near-high must not override this)
+    elif not above50:
+        # BELOW THE 50-DAY LINE — JLaw's core position-trade rule: below the 50-day, you
+        # wait for it to RECLAIM before buying, whatever the RS line is doing (audit #2,
+        # 2026-07-17). Without this, "resting" was a fall-through and a leader 10% below
+        # its 50-day with RS rising read a GREEN "Looks buyable". "resting" (below) is now
+        # only reachable when the stock is genuinely above its 50-day = a real calm spot.
+        phase = "below_trend"
     elif extended or near_high or just_popped:
         phase = "stretched"
+    elif recent_shock:
+        # SHOCK GATE (2026-07-18, the NTAP case): a >4% down day within the LAST 3
+        # sessions means this is not a calm resting spot yet, even if today's bar is
+        # quiet — the old 1-day lookback read NTAP green the day after its -7.1% shock.
+        # Checked AFTER stretched so a pop/near-high keeps the more specific "don't
+        # chase" message (CHENNPETRO: +7% today after a -4% day must stay "don't chase").
+        phase = "sliding"
     else:
-        phase = "resting"
+        phase = "resting"          # calm AND above its 50-day = the low-risk spot to buy
 
-    # tight starter-stop for EMERGING names: ~1.5x the stock's daily range below, never
-    # deeper than the swing low. An early starter with a swing-low stop 20%+ below is
-    # NOT "tight" (HOOD case, 2026-07-11) — JLaw sizes early entries small with a tight
-    # stop, and the R:R should be judged against that stop.
-    tight_stop = None
-    if price and atr14:
-        tight_stop = round(price - 1.5 * atr14, 2)
-        if swing_low:
-            tight_stop = max(swing_low, tight_stop)
+    # tight starter-stop for EMERGING names: ~1.5x the stock's daily range below the entry.
+    # JLaw sizes early entries small with a tight stop. NOTE (audit #5, 2026-07-17): this
+    # used to be max(swing_low, price-1.5*ATR) — the MAX picks the TIGHTER of the two, so a
+    # swing low only 0.5*ATR below price made the "tight" stop a coin-flip inside the daily
+    # wobble and blew the reward:risk up (16.7:1). It's now a straight 1.5*ATR, and every
+    # stop passes through _floored_stop below so risk can never fall inside ~1*ATR.
+    tight_stop = round(price - 1.5 * atr14, 2) if (price and atr14) else None
 
     ctx = {"name": name, "price": price, "currency": currency, "regime": regime,
            "stock_6m": stock_6m, "ex_1m": ex_1m, "pct_1d": pct_1d,
            "near_high": near_high, "extended": extended, "above200": above200,
            "pct_from_high": pct_from_high, "swing_low": swing_low,
-           "tight_stop": tight_stop,
-           "ma10": ma10, "ma20": ma20, "ma50": ma50v}
+           "tight_stop": tight_stop, "atr14": atr14,
+           "ma10": ma10, "ma20": ma20, "ma50": ma50v,
+           "days_below_50": days_b50,
+           # sliding entered ONLY because of an earlier-day shock (calm-ish today, trend
+           # intact) -> the wording must say "just had a sharp drop", not "still falling".
+           "shock_earlier": bool(recent_shock and not just_dumped
+                                 and (above20 or not rs_falling))}
     cell = _CELLS[(tier, phase)](ctx)
     tag, color = cell["tag"], cell["color"]
     headline, subline = cell["headline"], cell["subline"]
@@ -207,13 +263,15 @@ def build_plain_read(bundle: dict, news: dict | None = None) -> dict:
     # emerging starter — to a wait. Headline, paragraph, action box and chart buy-line
     # all move TOGETHER here (fix 2026-07-11: the old gate rewrote only the headline,
     # leaving a "good spot to buy" action box under a "go slow" banner).
+    riskoff_stop = _floored_stop(price, swing_low, atr14, min_atrs=0.0)
     if regime == "Risk-Off" and tag in ("buy", "emerging"):
         tag, color = "wait", "amber"
         headline = "Strong, but the market is weak"
         subline = "Good stock, risky time. Go slow."
         paragraph = _para_riskoff(name, stock_6m)
         buy_level = None
-        action = _riskoff_action(swing_low, currency)
+        action = _riskoff_action(riskoff_stop, currency)
+        cell = {**cell, "stop": riskoff_stop}   # keep the one-source stop coherent
 
     # Pull-back zone + stacked supports — for leaders and emerging names (buy / wait /
     # emerging), where a dip to support is a place to act. Weak/avoid get an exit line.
@@ -244,8 +302,31 @@ def build_plain_read(bundle: dict, news: dict | None = None) -> dict:
         eff_target, target_kind = high_52w, "year"
     else:
         eff_target, target_kind = None, None
-    # the stop the numbers are judged against: emerging starters use the TIGHT stop.
-    eff_stop = tight_stop if (tag == "emerging" and tight_stop) else swing_low
+    # the stop the numbers are judged against. It comes from the CHOSEN cell, which built
+    # it to pair with its own buy_level and floored it below the entry (audit #3/#5/#6).
+    # ONE source for lines.stop, the ladder and reward:risk, so they can never quote
+    # different exits. Fallback only if a cell somehow left it unset.
+    eff_stop = cell.get("stop")
+    if eff_stop is None:
+        eff_stop = _floored_stop(price, swing_low, atr14, min_atrs=0.0)
+
+    # COHERENCE GUARD (user-caught 2026-07-15: LLY showed "Exit 1,115" INSIDE the
+    # "Buy zone 1,079–1,172"). The zone and the stop are built by independent rules —
+    # the zone floor can be a round number / deep support BELOW the exit (KVUE), and
+    # the emerging tier's tight stop hangs off a buy-at-current-price entry (LLY,
+    # HOOD). On one screen those numbers must agree: you can never be shown a dip-buy
+    # level that sits below your own exit. Rule: clip the zone's floor up to the exit;
+    # if the exit sits at/above the zone's ceiling, the dip zone isn't playable — drop
+    # the zone (the ladder/chart then show just the exit). Blind invariant sweep
+    # (scratchpad invariant_sweep.py, I1): 4/26 names violated before, 0 after.
+    if supports and eff_stop is not None:
+        z = supports["zone"]
+        if eff_stop >= z["high"] * 0.995:
+            supports = None
+        elif eff_stop > z["low"]:
+            z["low"] = eff_stop
+            z["low_str"] = _money(eff_stop, currency)
+            z["single"] = z["low_str"] == z["high_str"]
 
     return {
         "ok": True,
@@ -262,10 +343,12 @@ def build_plain_read(bundle: dict, news: dict | None = None) -> dict:
         "detail": _detail(currency, tag, over_extended, extended, vol_ratio, rs_rising,
                           ex_1m, ex_6m, pct_1d, price, eff_target, target_kind,
                           buy_level, eff_stop,
-                          live_vol=bool(_g(f, "daily", "volume", "live_adjusted"))),
+                          live_vol=bool(_g(f, "daily", "volume", "live_adjusted")
+                                        or _g(f, "daily", "volume", "session_adjusted"))),
         "supports": supports,
         "news": news_lens,
         "signals": signals,
+        "freshness": _g(f, "freshness", default={}),
         "lines": {"swing_high": swing_high, "swing_low": swing_low, "buy": buy_level,
                   "target": eff_target, "stop": eff_stop},
     }
@@ -282,64 +365,142 @@ def _dip_below(price, ma10, ma20, ma50):
             round(price * 0.97, 2))
 
 
-def _cell(tag, color, headline, subline, paragraph, buy_level, action):
+def _dip_stop(dip, swing_low, atr14):
+    """The exit for a DIP-BUY belongs BELOW the dip you're being told to buy. Normally
+    the recent swing low IS below the dip, so use it. But when price has fallen below its
+    20-day and the dip level falls back to the (far lower) 50-day, the swing low can sit
+    ABOVE the dip — and pairing that as the exit tells the user to buy below their own
+    stop (audit #3, 2026-07-17). In that case drop the exit to ~1.5x ATR below the dip so
+    buy > exit always. For the normal case this returns the swing low unchanged (no
+    regression)."""
+    if swing_low is not None and dip is not None and swing_low < dip:
+        return swing_low
+    if dip is not None and atr14:
+        return round(dip - 1.5 * atr14, 2)
+    return round(dip * 0.97, 2) if dip is not None else swing_low
+
+
+def _floored_stop(entry, structural, atr14, min_atrs=1.0):
+    """A usable exit sits strictly BELOW the entry and — for a real risk figure — at least
+    `min_atrs` x ATR away. A stop inside the stock's normal daily swing is noise, not a
+    stop: it gets hit by chance and inflates reward:risk (audit #5/#6, 2026-07-17). Use the
+    structural level (swing low / dip stop) when it's comfortably below; otherwise fall back
+    to a ~1.5x-ATR volatility stop (also covers a fresh-low bar where the structural level
+    sits at/above the entry). min_atrs=0 = "just below the entry" (the hold-line for wait
+    names, where no position is being sized)."""
+    if not entry:
+        return structural
+    if atr14:
+        max_stop = entry - min_atrs * atr14          # closest a stop may sit to the entry
+        if structural is not None and structural < max_stop:
+            return structural
+        return round(entry - max(min_atrs, 1.5) * atr14, 2)
+    if structural is not None and structural < entry:
+        return structural
+    return round(entry * 0.97, 2)
+
+
+def _cell(tag, color, headline, subline, paragraph, buy_level, action, stop=None):
+    # `stop` = the exit that PAIRS with this cell's buy_level, reconciled so buy > stop.
+    # build_plain_read reads it back for lines.stop / the ladder / reward:risk, so the
+    # action prose, the chart lines and the R:R can never quote different exits (#3).
     return {"tag": tag, "color": color, "headline": headline, "subline": subline,
-            "paragraph": paragraph, "buy_level": buy_level, "action": action}
+            "paragraph": paragraph, "buy_level": buy_level, "action": action, "stop": stop}
 
 
 def _cell_leader_resting(c):
+    stop = _floored_stop(c["price"], c["swing_low"], c["atr14"])
     return _cell("buy", "green", "Looks buyable",
                  "A leader, resting at a calmer spot.",
                  _para_buy(c["name"], c["stock_6m"], c["regime"]),
-                 c["price"], _buy_now_action(c["price"], c["swing_low"], c["currency"]))
+                 c["price"], _buy_now_action(c["price"], stop, c["currency"]),
+                 stop=stop)
 
 
 def _cell_leader_stretched(c):
     dip = _dip_below(c["price"], c["ma10"], c["ma20"], c["ma50"])
+    stop = _floored_stop(dip, _dip_stop(dip, c["swing_low"], c["atr14"]), c["atr14"])
     return _cell("wait", "amber", "Strong — but don't chase it here",
                  "A real leader, but it has run up. Better to wait.",
                  _para_wait(c["name"], c["stock_6m"], c["pct_1d"], c["near_high"],
                             c["extended"], c["regime"]),
-                 dip, _buy_dip_action(dip, c["swing_low"], c["currency"]))
+                 dip, _buy_dip_action(dip, stop, c["currency"]), stop=stop)
+
+
+def _below_ma20(c) -> bool:
+    """True only when we KNOW price is under its 20-day line (unknown -> False, so the
+    prose never claims 'below its short-term line' without the number to back it)."""
+    return (c.get("price") is not None and c.get("ma20") is not None
+            and c["price"] < c["ma20"])
 
 
 def _cell_leader_sliding(c):
     # Still SLIDING — below its short-term trend with RS fading, OR a >4% down day
     # TODAY. Not a calm "resting" pullback yet, so not a buy-NOW. JLaw: buy the dip
     # when it STEADIES / reclaims, don't catch it mid-fall. (Milder cousin of deep_fade.)
+    stop = _floored_stop(c["price"], c["swing_low"], c["atr14"], min_atrs=0.0)
+    subline = ("A leader, but it just had a sharp drop. Let it settle and turn back up first."
+               if c.get("shock_earlier") else
+               "A leader, but it's still falling right now. Let it settle and turn back up first.")
     return _cell("wait", "amber", "Pulling back — wait for it to steady",
-                 "A leader, but it's still falling right now. Let it settle and turn back up first.",
-                 _para_settle(c["name"], c["stock_6m"], c["regime"]),
-                 None, _steady_action(c["price"], c["swing_low"], c["currency"]))
+                 subline,
+                 _para_settle(c["name"], c["stock_6m"], c["regime"],
+                              below_short=_below_ma20(c), lagging=(c["ex_1m"] or 0) < 0),
+                 None, _steady_action(c["price"], stop, c["currency"]), stop=stop)
+
+
+def _cell_reclaim(c):
+    # BELOW its 50-day line but not actively sliding/deep-faded. JLaw's core rule: below
+    # the 50-day, WAIT for it to reclaim before buying, whatever RS is doing (audit #2).
+    stop = _floored_stop(c["price"], c["swing_low"], c["atr14"], min_atrs=0.0)
+    d = c.get("days_below_50")
+    if d is not None and 1 <= d <= 3:
+        # RECLAIM WINDOW, early days (2026-07-18): a 1-3 day slip under the 50-day is
+        # often reclaimed quickly — same wait verdict, softer read. Day 7+ never reaches
+        # this cell (the reclaim-window rule routes it to the weak tier).
+        headline = "Just slipped below its 50-day — give it a few days"
+        subline = ("A short slip under the line, %s so far. These often get reclaimed "
+                   "quickly — wait for it to climb back above before buying."
+                   % ("1 day" if d == 1 else f"{d} days"))
+    else:
+        headline = "Below its 50-day line — wait for it to reclaim"
+        subline = "It has slipped under its 50-day line. Wait for it to climb back above before buying."
+    return _cell("wait", "amber", headline, subline,
+                 _para_settle(c["name"], c["stock_6m"], c["regime"],
+                              below_short=_below_ma20(c), lagging=(c["ex_1m"] or 0) < 0),
+                 None, _reclaim_action(c["price"], stop, c["currency"]), stop=stop)
 
 
 def _cell_emerging_shaky(c):
     # An early turn having a SHARP DOWN DAY (or, if the axes ever loosen, sliding) —
     # a starter-buy on a big red day would contradict "buy when it steadies".
+    stop = _floored_stop(c["price"], c["swing_low"], c["atr14"], min_atrs=0.0)
     return _cell("wait", "amber", "Early turn — but let it settle first",
                  "Starting to turn up, but it's had a sharp down day. Wait for it to steady.",
                  _para_emerging(c["name"], c["stock_6m"], c["ex_1m"], c["regime"],
                                 chased="it's had a sharp down day"),
-                 None, _steady_action(c["price"], c["swing_low"], c["currency"]))
+                 None, _steady_action(c["price"], stop, c["currency"]), stop=stop)
 
 
 def _cell_leader_deepfade(c):
+    stop = _floored_stop(c["price"], c["swing_low"], c["atr14"], min_atrs=0.0)
     return _cell("wait", "amber", "Pulled back hard — let it steady first",
                  "A real leader, but it has dropped a lot and is losing its lead. Wait for it to turn back up.",
                  _para_broke(c["name"], c["stock_6m"], c["pct_from_high"], c["regime"]),
-                 None, _steady_action(c["price"], c["swing_low"], c["currency"]))
+                 None, _steady_action(c["price"], stop, c["currency"]), stop=stop)
 
 
 def _cell_emerging_starter(c):
-    stop = c["tight_stop"] or c["swing_low"]
+    stop = _floored_stop(c["price"], c["tight_stop"] or c["swing_low"], c["atr14"])
     return _cell("emerging", "amber", "Early — just turning up",
                  "Reclaiming its trend and starting to beat the market. Early-stage, so higher risk.",
                  _para_emerging(c["name"], c["stock_6m"], c["ex_1m"], c["regime"], chased=False),
-                 c["price"], _emerging_action(c["price"], stop, c["currency"]))
+                 c["price"], _emerging_action(c["price"], stop, c["currency"]), stop=stop)
 
 
 def _cell_emerging_chased(c):
     dip = _dip_below(c["price"], c["ma10"], c["ma20"], c["ma50"])
+    stop = _floored_stop(dip, _dip_stop(dip, c["swing_low"], c["atr14"]), c["atr14"])
     # say WHY it's a chase — "the jump" wording on a name that never jumped (it was
     # merely near its highs) confused readers (audit finding, 2026-07-11).
     why = ("it just jumped" if (c["pct_1d"] or 0) > 4 else
@@ -348,21 +509,35 @@ def _cell_emerging_chased(c):
     return _cell("wait", "amber", "Gaining strength — but don't chase it here",
                  f"Turning up and beating the market lately, but {why}. Wait for a pullback.",
                  _para_emerging(c["name"], c["stock_6m"], c["ex_1m"], c["regime"], chased=why),
-                 dip, _buy_dip_action(dip, c["swing_low"], c["currency"]))
+                 dip, _buy_dip_action(dip, stop, c["currency"]), stop=stop)
 
 
 def _cell_weak(c):
-    if c["above200"]:
-        tag, color = "weak", "amber"
-        headline = "Getting weaker — not a good buy"
-        subline = "It was strong before. Now it is going down."
-    else:
+    # A weak name that has steadied short-term (back above its 20-day AND not lagging the
+    # market this month — the MSFT case) is still weak, but "it is falling right now" would
+    # contradict the engine's own numbers. Verdict unchanged; only the tense is honest.
+    falling_now = _below_ma20(c) or (c["ex_1m"] or 0) < 0
+    if c["above200"] is False:
+        # genuinely below its long-term (200-day) trend -> the harsher red "avoid".
         tag, color = "avoid", "red"
         headline = "Weak — best to avoid"
-        subline = "It is falling and lagging the market."
+        subline = ("It is falling and lagging the market." if falling_now else
+                   "It is far below its old levels and lagging the market.")
+    else:
+        # above the 200-day, OR unknown (young name, no 200-day yet — audit M4): the
+        # softer amber "getting weaker", not red.
+        tag, color = "weak", "amber"
+        headline = "Getting weaker — not a good buy"
+        subline = ("It was strong before. Now it is going down." if falling_now else
+                   "It was strong before. It is still well below its old levels.")
+    # the exit line must sit BELOW the current price — a weak name printing a fresh low
+    # today would otherwise show an exit at/above price (audit #6). min_atrs=0: no position
+    # is being sized here, so just keep it a real level strictly below.
+    stop = _floored_stop(c["price"], c["swing_low"], c["atr14"], min_atrs=0.0)
     return _cell(tag, color, headline, subline,
-                 _para_weak(c["name"], c["stock_6m"], c["ex_1m"], c["regime"]),
-                 None, _exit_action(c["swing_low"], c["currency"]))
+                 _para_weak(c["name"], c["stock_6m"], c["ex_1m"], c["regime"],
+                            falling_now=falling_now),
+                 None, _exit_action(stop, c["currency"]), stop=stop)
 
 
 def _cell_mixed(c):
@@ -372,7 +547,7 @@ def _cell_mixed(c):
                  None, {"type": "none",
                         "rows": [{"icon": "minus", "color": "muted",
                                   "text": "Nothing to do — there are stronger stocks to look at."}],
-                        "note": ""})
+                        "note": ""}, stop=None)
 
 
 # The verdict matrix: (tier, phase) -> one complete, internally-consistent package.
@@ -383,22 +558,26 @@ def _cell_mixed(c):
 #    require a FALLING RS line; the emerging tier requires a RISING one). They map to
 #    the starter cell so a future loosening of either axis fails safe (amber, small).
 _CELLS = {
-    ("leader", "resting"):     _cell_leader_resting,
-    ("leader", "stretched"):   _cell_leader_stretched,
-    ("leader", "sliding"):     _cell_leader_sliding,
-    ("leader", "deep_fade"):   _cell_leader_deepfade,
-    ("emerging", "resting"):   _cell_emerging_starter,
-    ("emerging", "stretched"): _cell_emerging_chased,
-    ("emerging", "sliding"):   _cell_emerging_shaky,
-    ("emerging", "deep_fade"): _cell_emerging_shaky,
-    ("weak", "resting"):       _cell_weak,
-    ("weak", "stretched"):     _cell_weak,
-    ("weak", "sliding"):       _cell_weak,
-    ("weak", "deep_fade"):     _cell_weak,
-    ("mixed", "resting"):      _cell_mixed,
-    ("mixed", "stretched"):    _cell_mixed,
-    ("mixed", "sliding"):      _cell_mixed,
-    ("mixed", "deep_fade"):    _cell_mixed,
+    ("leader", "resting"):       _cell_leader_resting,
+    ("leader", "stretched"):     _cell_leader_stretched,
+    ("leader", "below_trend"):   _cell_reclaim,
+    ("leader", "sliding"):       _cell_leader_sliding,
+    ("leader", "deep_fade"):     _cell_leader_deepfade,
+    ("emerging", "resting"):     _cell_emerging_starter,
+    ("emerging", "stretched"):   _cell_emerging_chased,
+    ("emerging", "below_trend"): _cell_reclaim,
+    ("emerging", "sliding"):     _cell_emerging_shaky,
+    ("emerging", "deep_fade"):   _cell_emerging_shaky,
+    ("weak", "resting"):         _cell_weak,
+    ("weak", "stretched"):       _cell_weak,
+    ("weak", "below_trend"):     _cell_weak,
+    ("weak", "sliding"):         _cell_weak,
+    ("weak", "deep_fade"):       _cell_weak,
+    ("mixed", "resting"):        _cell_mixed,
+    ("mixed", "stretched"):      _cell_mixed,
+    ("mixed", "below_trend"):    _cell_mixed,
+    ("mixed", "sliding"):        _cell_mixed,
+    ("mixed", "deep_fade"):      _cell_mixed,
 }
 
 
@@ -444,7 +623,8 @@ def _supports(price, ma10, ma20, ma50, ma200, swing_low, currency):
             break
 
     items = [{"label": lab, "value_str": _money(v, currency)} for lab, v in below]
-    zone = {"low_str": _money(cluster[-1][1], currency),
+    zone = {"low": cluster[-1][1], "high": cluster[0][1],
+            "low_str": _money(cluster[-1][1], currency),
             "high_str": _money(cluster[0][1], currency),
             "single": len(cluster) == 1}
     return {"zone": zone, "items": items}
@@ -572,9 +752,10 @@ def _detail(currency, tag, over_extended, extended, vol_ratio, rs_rising, ex_1m,
     """
     heavy = vol_ratio is not None and vol_ratio >= 1.3
     quiet = vol_ratio is not None and vol_ratio < 1.0
-    up = (pct_1d or 0) > 0
-    # live_vol: the ratio was time-adjusted from LIVE data ("vs the normal pace for
-    # this time of day") — say so, it's the honest version of this check (Kite, IN).
+    d1 = (pct_1d or 0)
+    up, down = d1 > 0, d1 < 0
+    # live_vol: the ratio was time-adjusted ("vs the normal pace for this time of day") —
+    # say so, it's the honest version of this check (Kite live OR the Yahoo session-adjust).
     tod = " for this time of day" if live_vol else ""
 
     # Same graded ATR scale as the verdict (4 = stretched, 7 = parabolic), so this dot
@@ -586,14 +767,18 @@ def _detail(currency, tag, over_extended, extended, vol_ratio, rs_rising, ex_1m,
     else:
         c1 = {"state": "good", "label": "Not over-extended"}
 
-    if heavy and not up:
+    if vol_ratio is None:
+        # no honest volume reading yet (session barely open — audit H3). Don't imply "calm".
+        c2 = {"state": "watch", "label": "Volume — no clear read yet today"}
+    elif heavy and down:
         c2 = {"state": "bad", "label": f"Heavy selling{tod or ' right now'}"}
     elif heavy and up:
         c2 = {"state": "good", "label": f"Strong buying — heavy volume{tod}, price up"}
-    elif quiet and (pct_1d or 0) < -4:
-        # a >4% down day is not "calm" whatever the volume ratio says — intraday the
-        # session's volume is still filling up, so "quiet" can be an artifact (MDB
-        # case, 2026-07-11: -5.7% day labelled "Calm pullback — quiet selling").
+    elif heavy:
+        # heavy volume on a FLAT close is churn with no direction — not "selling" (audit M3).
+        c2 = {"state": "watch", "label": "Heavy volume, but the price went nowhere"}
+    elif quiet and d1 < -4:
+        # a >4% down day is not "calm" whatever the volume ratio says.
         c2 = {"state": "watch", "label": "Sharp down day — let it settle"}
     elif quiet:
         c2 = {"state": "good", "label": ("Selling is quiet for this time of day"
@@ -629,7 +814,7 @@ def _detail(currency, tag, over_extended, extended, vol_ratio, rs_rising, ex_1m,
                   "note": "at its 1-year high — no ceiling above to measure against"}
 
     # Reward vs risk — the "is it worth getting in?" number. From the entry level
-    # (buy zone), the stop (safety line) and the target (recent high):
+    # (buy zone), the stop (exit line) and the target (recent high):
     #   reward = target - entry,  risk = entry - stop,  ratio = reward / risk.
     # Only meaningful when there's a buy to size up (skip for weak/avoid).
     # entry = the buy level if there's a buy setup, else the current price (so any
@@ -648,6 +833,11 @@ def _detail(currency, tag, over_extended, extended, vol_ratio, rs_rising, ex_1m,
                 st, note = "watch", "modest — the reward roughly matches the risk"
             else:
                 st, note = "bad", "poor — you'd risk more than you could gain here"
+            # HORIZON HONESTY (audit #5): when the target is the far 1-year high, the reward
+            # is measured to a ceiling that may be months away while the risk is a near stop
+            # — a big ratio here isn't a near-term promise. Say so rather than imply it.
+            if target_kind == "year":
+                note += " (measured to its 1-year high, which may be a way off)"
             reward_risk = {"ratio": ratio, "state": st, "note": note}
         else:
             reward_risk = {"ratio": None, "state": "watch",
@@ -701,7 +891,15 @@ def _para_wait(name, stock_6m, pct_1d, near_high, extended, regime):
             f"But {tail}. Buying right after a big run like this is risky.")
 
 
-def _para_weak(name, stock_6m, ex_1m, regime):
+def _para_weak(name, stock_6m, ex_1m, regime, falling_now=True):
+    # falling_now=False (fidelity fix 2026-07-18): a long-broken name that has steadied
+    # short-term (above its 20-day, not lagging this month — the MSFT case) must not be
+    # told "lately it has been falling more than the market"; the weakness is months-old.
+    if not falling_now:
+        return (f"{name} fell hard over the past months and is still well below the levels "
+                f"it used to hold, lagging the market over the longer run. It has steadied "
+                f"a little lately, but it has not won back the ground that matters. This is "
+                f"real weakness, not a small dip.")
     return (f"{name} went up earlier, but lately it has been falling — and falling more than "
             f"the market. It is now below the levels it had been holding. This is real "
             f"weakness, not a small dip.")
@@ -720,10 +918,19 @@ def _para_broke(name, stock_6m, pct_from_high, regime):
             f"turn back up first.")
 
 
-def _para_settle(name, stock_6m, regime):
+def _para_settle(name, stock_6m, regime, below_short=True, lagging=True):
     up = _six_phrase(stock_6m, "a market leader")
-    return (f"{name} is {up} and still one of the stronger names — but right now it's drifting "
-            f"lower, below its short-term line, and slipping behind the market for the moment. "
+    # Say only what the numbers show (fidelity fix 2026-07-18): the sliding phase can be
+    # entered off a single sharp down day while the stock is still ABOVE its short-term
+    # line and ahead of the market (the SEZL case) — don't assert clauses that aren't true.
+    bits = []
+    if below_short:
+        bits.append("below its short-term line")
+    if lagging:
+        bits.append("slipping behind the market for the moment")
+    middle = ("it's drifting lower, " + " and ".join(bits)) if bits \
+        else "it's just had a sharp drop"
+    return (f"{name} is {up} and still one of the stronger names — but right now {middle}. "
             f"That's not a calm, buyable pause yet. Better to wait for it to stop going down and "
             f"turn back up before stepping in.")
 
@@ -744,7 +951,7 @@ def _buy_now_action(price, swing_low, currency):
              "text": f"Good spot to buy around {_money(price, currency)}."}]
     note = ""
     if swing_low:
-        note = (f"Your safety line is {_money(swing_low, currency)} — "
+        note = (f"Your exit line is {_money(swing_low, currency)} — "
                 f"sell if it ends a day below that.")
     return {"type": "buy", "number": _money(price, currency), "rows": rows, "note": note}
 
@@ -754,7 +961,7 @@ def _emerging_action(price, swing_low, currency):
              "text": f"An early setup — a small starter around {_money(price, currency)} is one way to play it."}]
     note = "Early-stage, so keep it small — it isn't a confirmed leader yet."
     if swing_low:
-        note = (f"Keep it tight — safety line {_money(swing_low, currency)} (sell if it ends a day "
+        note = (f"Keep it tight — exit line {_money(swing_low, currency)} (sell if it ends a day "
                 f"below). Early-stage, so size small; it isn't a confirmed leader yet.")
     return {"type": "buy", "number": _money(price, currency), "rows": rows, "note": note}
 
@@ -768,7 +975,7 @@ def _riskoff_action(swing_low, currency):
     ]
     note = ""
     if swing_low:
-        note = (f"Already own it? Your safety line is {_money(swing_low, currency)} — "
+        note = (f"Already own it? Your exit line is {_money(swing_low, currency)} — "
                 f"sell if it ends a day below that.")
     return {"type": "wait", "number": None, "rows": rows, "note": note}
 
@@ -782,20 +989,35 @@ def _steady_action(price, swing_low, currency):
     ]
     note = ""
     if swing_low:
-        note = (f"If you do step in, your safety line is {_money(swing_low, currency)} — "
+        note = (f"If you do step in, your exit line is {_money(swing_low, currency)} — "
                 f"sell if it ends a day below that.")
     return {"type": "wait", "number": None, "rows": rows, "note": note}
 
 
-def _buy_dip_action(dip_level, swing_low, currency):
+def _reclaim_action(price, swing_low, currency):
+    rows = [
+        {"icon": "hand", "color": "amber",
+         "text": "Right now → wait. It's under its 50-day line — not a buy yet."},
+        {"icon": "up", "color": "green",
+         "text": "Climbs back above its 50-day and holds → then it's worth a look."},
+    ]
+    note = ""
+    if swing_low:
+        note = (f"Already own it? Your exit line is {_money(swing_low, currency)} — "
+                f"sell if it ends a day below that.")
+    return {"type": "wait", "number": None, "rows": rows, "note": note}
+
+
+def _buy_dip_action(dip_level, stop, currency):
+    # `stop` is the reconciled dip-buy exit (below the dip), NOT the raw swing low (#3).
     rows = [
         {"icon": "hand", "color": "amber", "text": "Right now → wait. Don't chase the jump."},
         {"icon": "down", "color": "green",
          "text": f"Dips back to about {_money(dip_level, currency)} and steadies → good spot to buy."},
     ]
     note = ""
-    if swing_low:
-        note = (f"If you buy, your safety line is {_money(swing_low, currency)} — "
+    if stop:
+        note = (f"If you buy the dip, your exit line is {_money(stop, currency)} — "
                 f"sell if it ends a day below that.")
     return {"type": "wait", "number": _money(dip_level, currency), "rows": rows, "note": note}
 

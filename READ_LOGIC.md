@@ -5,6 +5,77 @@ Keep this in sync with `backend/plain_read.py` — if you change the code, updat
 
 ---
 
+## 2026-07-18 GROUP HEALTH + VERIFIED DOTS (fidelity layer on top of the memory work)
+
+- **GROUP HEALTH check line (STEP 1 — SHOW ONLY, never changes a verdict).**
+  `market_scan.industry_breadth(mk)` = one whole-market TradingView pass per day
+  (universe wider than the momentum floors: price/3, mcap/4, top 3000 by mcap) →
+  per-industry {n, below20, hardweek, health}. health: **breaking** = ≥60% of the group
+  below their 20-day OR ≥40% fell >4% this week; **mixed** = ≥40% below the 20-day;
+  else **healthy**. Groups with <8 members give NO line (silence beats a guess — also
+  the misclassification guard). `app._group_check` appends it to the read's checks:
+  red "Its group is under pressure — X of N similar stocks are below their 20-day
+  line[, Y fell hard this week]" / amber mixed / green healthy. Cached daily per market
+  (`breadth:{mk}`), never caches a failure. *Principle: a stock rarely fights its whole
+  group — when several similar names break together the problem is the group, not the
+  story (the NTAP/17-Jul lesson). STEP 2 (a breaking group demotes a fresh green) is
+  NOT built — it must first earn its power against past-article tests.*
+- **VERIFIED DOTS on Early / Quiet / Fast (`app._verify_dots`).** Every non-Buy-zone
+  row's readiness dot now comes from the ACTUAL read engine (same as the Buy-zone tab):
+  read buy/emerging → green "calm" · wait → amber "hot" · weak/avoid/mixed → the row
+  leaves the list. Buy-zone keeps `_verify_buyzone` (fail-CLOSED — it promises an
+  entry); these tabs fail-SOFT (transient read error → cautious amber, row kept) so one
+  Yahoo hiccup can't empty the screener. Cost ≈ +1 min on the day's first scan per
+  market, inside the same daily cache. Frontend: the Quiet legend shows the two-dot key
+  only if a (rare) verified green actually exists in that tab.
+
+---
+
+## 2026-07-18 "GIVE THE APP MEMORY" (shock gate + reclaim window — newest layer)
+
+The read now carries a small MEMORY of the recent past (`jlaw_data_core._trend_memory`,
+in `features.daily.trend_memory`, computed from bars already fetched — no extra request):
+
+- **`worst_drop_3d`** — the most negative 1-day % change across the last 3 completed
+  sessions. **SHOCK GATE:** a would-be green "Looks buyable" (resting) is demoted to the
+  sliding wait ("Pulling back — wait for it to steady", subline "A leader, but it just
+  had a sharp drop…") when any of the last 3 sessions closed worse than −4% — the same
+  bar the 1-day `just_dumped` check uses, extended back 3 sessions. *JLaw: buy when it
+  STEADIES; a high-energy decline two days ago is not a calm pause (the NTAP case,
+  17-Jul-2026 article — its −7.1% shock was one day back and invisible to a 1-day gate).*
+  ORDER MATTERS: the gate is checked AFTER `stretched`, so a pop/near-high keeps the more
+  specific "don't chase" message (CHENNPETRO: +7% today after a −4% day two days ago).
+  A >4% down day TODAY still outranks everything after deep_fade, as before.
+- **`days_below_50`** — consecutive completed sessions the close has been under the
+  50-day line (0 = above it now). **RECLAIM WINDOW:** *JLaw gives a name ~4–6 trading
+  days below the 50-day to climb back above before the trend call is made.*
+  - **1–3 days below** → the `below_trend` cell reads softer: "Just slipped below its
+    50-day — give it a few days" (still an amber wait, same reclaim action).
+  - **4–6 days** → the standard "Below its 50-day line — wait for it to reclaim".
+  - **>6 days, unreclaimed** → firmly **weak** (routed to the weak tier: amber "Getting
+    weaker", or red "avoid" when also below the 200-day) — even if a bounce keeps the
+    short-term signals mixed. The market has answered.
+- **New principles:** P10 (never green within 3 sessions of a >4% down day) and P11
+  (>6 days below the 50-day is weak/avoid; a 1–3-day slip on a strong name is never
+  weak) in `backend/principles_test.py` (23 scenarios).
+
+---
+
+## 2026-07-17 FULL-AUDIT changes (read this before the older sections — it overrides them)
+
+- **Phase axis now has FIVE states** (was four): `deep_fade → sliding → below_trend → stretched → resting`, checked in that order. **`below_trend` = below the 50-day** (audit #2): a name under its 50-day is NOT "resting/buyable" whatever its RS is doing — it reads **"Below its 50-day line — wait for it to reclaim"** (`_cell_reclaim`, leader + emerging tiers). `resting` (the green buy) is therefore only reachable when the stock is genuinely **above its 50-day**. This is JLaw's core position-trade line rule and closed the "🟢 buy 10% below the 50-day" hole.
+- **`near_high` fix (audit #1):** `pct_from_high is not None and > -5` (was `(x or -99)` which swallowed 0.0 → a stock AT its 52-wk high read green). Never let a meaningful 0 fall through an `or`.
+- **ONE-SOURCE levels (audit #3/#5/#6):** each cell returns its own reconciled `stop`, paired with its `buy_level` so **buy is always above the exit**. `lines.stop`, the ladder and reward:risk all read that one value. Dip-buy cells put the exit BELOW the dip (`_dip_stop`). Every exit passes through **`_floored_stop`**: at least ~1×ATR below the entry for buy setups (min_atrs=1.0), just below price for hold-lines (0.0). Kills near-zero-risk stops and the inflated R:R. `tight_stop` is now a straight 1.5×ATR. NOTE: `_swing` still INCLUDES today's bar — swing_high feeds the TARGET (today's high is valid resistance); the floored stop handles #6, so don't exclude today (it regressed FIG's target).
+- **R:R horizon honesty (audit #5):** when the target is the far 1-year high, the note appends "(measured to its 1-year high, which may be a way off)".
+- **`above200` is TRI-STATE** (audit M4): `None` when <200 bars (young name, no 200-day). `structural_weak` requires `above200 is False` (not `not above200`); `_cell_weak` gives red "avoid" only when `above200 is False`, else amber "weak". A young name is never wrongly stamped red.
+- **Volume check is SESSION-ADJUSTED** (audit H3): intraday, today's partial volume is scaled by the elapsed session fraction (Yahoo meta `currentTradingPeriod`). <5% into the session → no honest reading → "Volume — no clear read yet today" (not a false "calm"). Heavy volume on a FLAT close → "Heavy volume, but the price went nowhere" (audit M3).
+- **`rs_line_slope` is RS-vs-its-50-bar-mean (POSITION), not a raw slope** — deliberate and documented (a raw 10-bar slope flips 7/29 verdicts and undoes the TEAM/CRM structural-weak fix). `rs_vs_mean` is the honest alias.
+- **Freshness (audit H1):** the read carries `freshness` + `as_of_str` ("live — updates through the trading day" / "at the {date} close" / "as of {date} (historical)"), shown on the price line; single reads are cached in ~15-min buckets, not all day.
+- **Formatting:** `_money` shows 2 decimals under 10 units (matches the frontend `fmtMoney` — keep them in lockstep).
+- **STANDING TEST:** `backend/principles_test.py` (P1–P9) asserts all of the above. Run after any engine change, with the 56-name `audit_sweep.py` and the 21-name `regress.py`.
+
+---
+
 ## The verdict (green / amber / red)
 
 Computed from the engine's numbers (relative strength, moving averages, distance
@@ -67,6 +138,17 @@ boundary — don't add an `elif`.
     so the old rule dropped them onto "not a clear leader."
 - **Getting weaker / avoid (red/amber)** — below its recent trend lines and lagging
   the market. *JLaw: relative weakness is the mirror of the leadership we want.*
+  Two ways into the weak tier: (a) below **both** its 20- and 50-day while lagging /
+  RS falling; (b) **structural weak** (added 2026-07-15) — below **both** its 50- and
+  200-day with a falling RS line **and** a big 6-month shortfall vs the market
+  (ex_6m < −20), *even if a short bounce has lifted it back above its 20-day*. Path (b)
+  catches a name whose long-term trend is broken but which the below-20-**and**-50 gate
+  (a) would miss on a dead-cat bounce. Tight by design — a real leader in a dip is always
+  well ABOVE its 200-day, so it can never trip (b). From the 15-Jul Midweek Pulse: TEAM &
+  CRM (≈20% below the 200-day, RS falling, ex_6m −47/−44) had been reading "mixed"
+  (no-edge) when JLaw called them "weak structure"; also correctly re-tags MSFT-class
+  mega-cap laggards (below 200-day, −28% 6-mo vs market). Below the 200-day → the harsher
+  **avoid** cell; above it → **weak**.
 - **Not a clear leader (amber)** — no fresh strength (RS not turning up, or no recent
   outperformance): genuinely mixed → point the user at stronger names.
 

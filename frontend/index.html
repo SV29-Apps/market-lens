@@ -6,6 +6,7 @@
 <title>Market Lens</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
 <style>
   :root{
     --bg:#F4F5F7; --card:#FFFFFF; --line:#E3E6EA; --line2:#CFD4DA;
@@ -17,7 +18,9 @@
     --radius:14px; --radius-sm:10px;
   }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--ink);
+  /* page is WHITE (user ask 2026-07-15 — cleaner, more legible); --bg stays the soft
+     grey used INSIDE cards for chips/highlights, where it now provides the contrast */
+  body{margin:0;background:#FFFFFF;color:var(--ink);
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
     -webkit-font-smoothing:antialiased;line-height:1.55}
   .wrap{max-width:1040px;margin:0 auto;padding:24px 22px 60px;min-height:100vh}
@@ -33,14 +36,42 @@
   button{font:inherit;cursor:pointer}
   /* search */
   .search{display:flex;align-items:center;gap:8px;border:1.5px solid var(--line2);
-    border-radius:var(--radius-sm);padding:12px 14px;background:#fff;margin:14px 0 12px}
+    border-radius:var(--radius-sm);padding:7px 7px 7px 14px;background:#fff;margin:14px 0 12px}
   .search input{border:0;outline:0;flex:1;font-size:16px;background:transparent;color:var(--ink)}
   .pills{display:flex;gap:8px;margin-bottom:6px}
   .pill{font-size:13px;padding:7px 16px;border-radius:var(--radius-sm);border:1px solid var(--line2);
     background:#fff;color:var(--ink2)}
-  .pill.on{background:var(--blue-bg);border-color:var(--blue-bg);color:var(--blue);font-weight:600}
-  .go{width:100%;margin-top:12px;padding:13px;border:0;border-radius:var(--radius-sm);
-    background:var(--ink);color:#fff;font-size:15px;font-weight:600}
+  .pill.on{background:var(--blue);border-color:var(--blue);color:#fff;font-weight:600}
+  .pill.on::before{content:"✓ ";font-weight:700}
+  /* compact Read button INSIDE the search field (replaces the old full-width bar) */
+  .go{flex:none;border:0;border-radius:8px;background:var(--blue);color:#fff;
+    font-size:13.5px;font-weight:600;padding:9px 16px;white-space:nowrap}
+  /* home: quiet one-line disclaimer (grey — the amber highlight belongs to the
+     market-mood banner ONLY, so the two can't be confused) */
+  .callout{border-left:2px solid var(--line2);color:var(--ink2);
+    padding:2px 0 2px 10px;font-size:12px;line-height:1.55;margin:12px 0 4px}
+  /* home column: cap + centre so desktop keeps the approved sample's proportions */
+  #s-search{max-width:620px;margin:0 auto}
+  /* market-mood banner: the page's one loud status light */
+  .mood{display:flex;align-items:center;gap:10px;border-left:4px solid currentColor;
+    border-radius:0 var(--radius-sm) var(--radius-sm) 0;padding:12px 14px;
+    font-size:13.5px;line-height:1.5;margin-top:14px}
+  .mood b{font-weight:600}
+  .mooddot{width:11px;height:11px;border-radius:50%;background:currentColor;flex:none}
+  /* home: search suggestions dropdown */
+  .searchwrap{position:relative}
+  .sugg{position:absolute;left:0;right:0;top:100%;margin-top:-10px;z-index:30;
+    background:var(--card);border:1.5px solid var(--line2);border-top:0;
+    border-radius:0 0 var(--radius-sm) var(--radius-sm);overflow:hidden;
+    box-shadow:0 10px 24px rgba(27,39,51,.10)}
+  .sugg .srow{display:flex;align-items:center;gap:9px;padding:11px 14px;cursor:pointer;
+    border-top:1px solid var(--line);font-size:14px}
+  .sugg .srow:hover,.sugg .srow.hl{background:var(--blue-bg)}
+  .sugg .sname{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sugg .sexch{margin-left:auto;font-size:11.5px;color:var(--ink3);white-space:nowrap}
+  /* home: study-list rows (reason INLINE next to the name; shortens with … when tight) */
+  .whyin{font-size:12px;color:var(--ink2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+  .chgup{color:var(--green);font-size:12px} .chgdn{color:var(--red);font-size:12px}
   .key{display:flex;gap:14px;margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
   .key span{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--ink2)}
   .dot{width:9px;height:9px;border-radius:50%}
@@ -62,6 +93,7 @@
     padding:9px 13px;margin:8px 0 4px;font-size:13px;line-height:1.5}
   .livebadge{font-size:10px;font-weight:700;color:var(--green);background:var(--green-bg);
     border-radius:8px;padding:1px 6px;letter-spacing:.4px;vertical-align:1px}
+  .asof{font-size:11.5px;color:var(--ink3)}
   .lp-up{color:var(--green);font-size:12px} .lp-dn{color:var(--red);font-size:12px}
   .dotkey{display:flex;gap:16px;margin:2px 0 8px;font-size:11.5px;color:var(--ink2)}
   .dotkey span{display:flex;align-items:center;gap:6px}
@@ -155,31 +187,38 @@
 
   <!-- SCREEN 1 — search -->
   <section id="s-search">
-    <div class="row"><h1>Market Lens</h1><span class="tag">educational</span></div>
-    <div class="search">
-      <span class="muted">🔎</span>
-      <input id="ticker" type="text" autocomplete="off" placeholder="Type a stock — e.g. Marksans, AAPL"
-        aria-label="Type a stock">
+    <div class="row"><h1>Market Lens</h1><span class="tag">for swing traders</span><span class="tag">educational</span></div>
+    <div class="callout">A study tool for short-term (swing) trading ideas, not a tip sheet —
+      it points to charts worth your attention; the decision is always yours. Educational only,
+      never a buy or sell signal.</div>
+    <div class="searchwrap">
+      <div class="search">
+        <span class="muted">🔎</span>
+        <input id="ticker" type="text" autocomplete="off" placeholder="Type a stock — e.g. Marksans, AAPL"
+          aria-label="Type a stock">
+        <button class="go" id="goBtn">Read ›</button>
+      </div>
+      <div id="sugg" class="sugg hidden"></div>
     </div>
     <div class="pills" id="markets">
       <button class="pill" data-m="US">United States</button>
       <button class="pill" data-m="IN">India</button>
       <button class="pill" data-m="UK">United Kingdom</button>
     </div>
-    <button class="go" id="goBtn">Read this stock</button>
 
-    <div class="card" style="margin-top:18px">
-      <div class="row"><span class="small" style="font-weight:600;color:var(--ink2)">Where money’s flowing</span>
+    <div id="homeStrip" class="mood hidden"></div>
+
+    <div class="card" style="margin-top:12px">
+      <div class="row"><span class="small" style="font-weight:600;color:var(--ink2)">Today’s study list</span>
         <button class="back" style="margin:0;color:var(--blue)" id="seeAll">see all ›</button></div>
-      <div id="teaser" class="small muted" style="margin-top:8px">Tap “see all” to see today’s movers.</div>
-      <div class="key">
-        <span><i class="dot d-green"></i>buy-ready</span>
-        <span><i class="dot d-amber"></i>strong, wait</span>
-        <span><i class="dot d-red"></i>avoid</span>
+      <div id="teaserSub" class="small muted" style="margin-top:2px"></div>
+      <div id="teaser" class="small muted" style="margin-top:8px"></div>
+      <div class="key" id="teaserKey">
+        <span><i class="dot d-green"></i>calm — near support</span>
+        <span><i class="dot d-amber"></i>hot — wait for it to settle</span>
       </div>
     </div>
-    <p class="disc">Educational only. Not advice, and never a buy or sell signal.
-      Always do your own checks.</p>
+    <p class="disc">Free public data — prices may lag. Always do your own checks.</p>
   </section>
 
   <!-- SCREEN 2 — read -->
@@ -206,8 +245,7 @@
       <input id="strongSearch" type="text" placeholder="Search a stock — name or ticker…" autocomplete="off" spellcheck="false">
       <span class="matchcount" id="strongCount"></span>
     </div>
-    <div class="dotkey"><span><i class="dot d-green"></i>at a calm spot</span>
-      <span><i class="dot d-amber"></i>extended or moving hard — wait for a dip</span></div>
+    <div class="dotkey" id="dotkey"></div>
     <div id="strongBody" style="margin-top:4px"></div>
   </section>
 
@@ -222,7 +260,12 @@ let readBackTo = "search";   // where the read screen's back button returns to
 function show(name){
   for(const k of ["search","read","strong"]) $("#s-"+k).classList.toggle("hidden", k!==name);
   window.scrollTo(0,0);
-  if(name==="search") $("#ticker").value = "";   // clear the box on returning home
+  if(name==="search"){
+    $("#ticker").value = "";   // clear the box on returning home
+    hideSugg();                // and the type-ahead panel (an in-flight suggest fetch
+                               // could have re-opened it behind the read screen)
+    loadHome();                // refresh mood + study list (cheap: day-cached server side)
+  }
   current = name;
 }
 function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g,
@@ -239,6 +282,8 @@ function fmtMoney(v, cur){
 }
 const _MON=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 function shortDate(s){ const p=String(s||"").split("-"); return p.length===3?`${_MON[+p[1]-1]} ${+p[2]}`:""; }
+// the hover tooltip shows the WHOLE date (user ask 2026-07-15: "15 Jul 2026", never truncated)
+function fullDate(s){ const p=String(s||"").split("-"); return p.length===3?`${+p[2]} ${_MON[+p[1]-1]} ${p[0]}`:String(s||""); }
 
 // market pills
 document.querySelectorAll("#markets .pill").forEach(b=>{
@@ -247,7 +292,7 @@ document.querySelectorAll("#markets .pill").forEach(b=>{
     document.querySelectorAll("#markets .pill").forEach(x=>x.classList.remove("on"));
     b.classList.add("on"); market=b.dataset.m;
     lastStrong = null;      // a cached list from the OLD market must never render under the new one
-    loadTeaser();
+    loadHome();
   });
 });
 
@@ -260,14 +305,68 @@ fetch("/api/config").then(r=>r.json()).then(cfg=>{
   });
   if(!en.includes(market)){ market = en[0];
     document.querySelectorAll("#markets .pill").forEach(x=>x.classList.toggle("on", x.dataset.m===market));
-    loadTeaser(); }
+    loadHome(); }
 }).catch(()=>{});
 
 // search
 function doSearch(){ const t=$("#ticker").value.trim(); if(t) openRead(t); }
-$("#goBtn").addEventListener("click", doSearch);
-$("#ticker").addEventListener("keydown", e=>{ if(e.key==="Enter"){ e.preventDefault(); doSearch(); } });
+$("#goBtn").addEventListener("click", ()=>{ hideSugg(); doSearch(); });
 $("#seeAll").addEventListener("click", openStrong);
+
+// ---- search suggestions (type-ahead): the user PICKS a stock instead of guessing.
+// Picking a name from another market also switches the market pill.
+let suggT = null, suggItems = [], suggHl = -1;
+function hideSugg(){ const el=$("#sugg"); el.classList.add("hidden"); el.innerHTML=""; suggItems=[]; suggHl=-1; }
+function renderSugg(){
+  const el = $("#sugg");
+  if(!suggItems.length){ hideSugg(); return; }
+  el.innerHTML = suggItems.map((it,i)=>`<div class="srow${i===suggHl?" hl":""}" data-i="${i}">
+      <span class="sname">${esc(it.name)}</span><span class="tkr">${esc(tkShort(it.symbol))}</span>
+      <span class="sexch">${esc(it.exch)}</span></div>`).join("");
+  el.classList.remove("hidden");
+}
+function pickSugg(i){
+  const it = suggItems[i]; if(!it) return;
+  hideSugg();
+  $("#ticker").value = it.symbol;
+  if(it.market && it.market !== market){          // picked a name from the other market
+    market = it.market;
+    document.querySelectorAll("#markets .pill").forEach(x=>x.classList.toggle("on", x.dataset.m===market));
+    lastStrong = null; loadHome();
+  }
+  openRead(it.symbol, it.market);
+}
+$("#ticker").addEventListener("input", ()=>{
+  const q = $("#ticker").value.trim();
+  clearTimeout(suggT);
+  if(q.length < 2){ hideSugg(); return; }
+  suggT = setTimeout(async ()=>{
+    try{
+      const r = await fetch(`/api/suggest?q=${encodeURIComponent(q)}&market=${market}`);
+      const d = await r.json();
+      // stale response (user kept typing) OR the user already left the home screen —
+      // rendering then would re-open the panel behind the read and greet the next
+      // "back" with a dropdown covering the market pills (user-caught, 2026-07-18).
+      if(current !== "search" || $("#ticker").value.trim() !== q) return;
+      suggItems = d.items || []; suggHl = -1; renderSugg();
+    }catch(e){ hideSugg(); }
+  }, 250);
+});
+$("#sugg").addEventListener("mousedown", e=>{       // mousedown beats the input's blur
+  const row = e.target.closest(".srow");
+  if(row){ e.preventDefault(); pickSugg(+row.dataset.i); }
+});
+$("#ticker").addEventListener("keydown", e=>{
+  const open = !$("#sugg").classList.contains("hidden");
+  if(e.key === "Enter"){
+    e.preventDefault();
+    if(open && suggHl >= 0) pickSugg(suggHl);
+    else { hideSugg(); doSearch(); }
+  } else if(open && e.key === "ArrowDown"){ e.preventDefault(); suggHl = Math.min(suggHl+1, suggItems.length-1); renderSugg(); }
+  else if(open && e.key === "ArrowUp"){ e.preventDefault(); suggHl = Math.max(suggHl-1, 0); renderSugg(); }
+  else if(e.key === "Escape"){ hideSugg(); }
+});
+$("#ticker").addEventListener("blur", ()=>setTimeout(hideSugg, 150));
 
 const ICON = {up:"▲", down:"▼", check:"✓", hand:"•", minus:"•"};
 
@@ -302,10 +401,12 @@ function renderRead(d){
   const lv = d.live;                                   // Kite live overlay (IN only)
   const pd = lv ? lv.pct_1d : d.pct_1d;
   const day = pd>0 ? `up ${pd}% today` : (pd<0 ? `down ${Math.abs(pd)}% today` : "flat today");
+  // honest freshness stamp — never present the price as "now" unlabelled (audit H1)
+  const asof = d.as_of_str ? `<span class="asof">${esc(d.as_of_str)}</span>` : "";
   $("#readBody").innerHTML = `
     <div class="row" style="margin-bottom:4px">
       <div><div style="font-weight:600;font-size:19px">${esc(d.name)}<span class="tkr">${esc(tkShort(d.symbol))}</span></div>
-        <div class="muted" style="font-size:14.5px">${esc(lv?lv.price_str:d.price_str)} · ${day}${lv?' <span class="livebadge">LIVE</span>':''}</div></div>
+        <div class="muted" style="font-size:14.5px">${esc(lv?lv.price_str:d.price_str)} · ${day}${lv?' <span class="livebadge">LIVE</span>':''} ${asof}</div></div>
     </div>
     ${statsStrip(d)}
     ${d.about?`<div class="about">${esc(d.about)}</div>`:""}
@@ -317,7 +418,7 @@ function renderRead(d){
     <div class="dgrid" style="margin-top:0${coneHtml(d)?"":";grid-template-columns:1fr"}">
       <div class="action">
         <div class="lab">${a.type==="exit"?"If you own it, watch one number:":"What to do"}</div>
-        ${a.number?`<div class="numlab">${{buy:"a good spot to buy, around",wait:"the dip level to watch",exit:"your sell line"}[a.type]||""}</div><div class="bignum">${esc(a.number)}</div>`:""}
+        ${a.number?`<div class="numlab">${{buy:"a good spot to buy, around",wait:"the dip level to watch",exit:"your exit line"}[a.type]||""}</div><div class="bignum">${esc(a.number)}</div>`:""}
         ${rows}
         ${a.note?`<div class="note">${esc(a.note)}</div>`:""}
       </div>
@@ -345,8 +446,8 @@ function coneHtml(d){
     <span class="cval"${strong?' style="font-weight:600"':''}>${fmtMoney(lo,cur)} – ${fmtMoney(hi,cur)}</span></div>`;
   return `<div class="conebox">
     <div class="lab">Probable range — next ~${c.weeks} weeks</div>
-    ${row("Typical case (about 2 in 3)", c.b1_lo, c.b1_hi, true)}
-    ${row("Wider case (about 19 in 20)", c.b2_lo, c.b2_hi, false)}
+    ${row("Typical case (about a 68% chance)", c.b1_lo, c.b1_hi, true)}
+    ${row("Wider case (about a 95% chance)", c.b2_lo, c.b2_hi, false)}
     <div class="note">The stock's own normal wobble — how far it usually travels, <b>not which way</b>.
       The shaded fan on the chart draws this range. Not a forecast of direction.</div>
   </div>`;
@@ -368,38 +469,57 @@ function statsStrip(d){
 }
 
 // The plan — every price level in ONE ladder, sorted the way price sits (top→down):
-// target → current price → buy zone (named supports) → safety line. Reward:risk lives
+// target → current price → buy zone (named supports) → exit. Reward:risk lives
 // ON the target line, so "no target" and a ratio can never disagree. Weak names skip
 // the ladder — their exit box above already carries the one number that matters.
 function ladderHtml(d){
+  // LABEL-FIRST rungs (user-approved 2026-07-15): every rung reads the same way —
+  // "What it is · the number — what to do with it". The target names its source
+  // (recent high vs 1-year high) so the two can never be confused.
   const dt = d.detail || {}, L = d.lines || {}, sp = d.supports, a = d.action || {};
-  const row = (price, cls, body, hl) =>
-    `<div class="lrow${hl?' lrow-hl':''}"><span class="lprice ${cls}">${price}</span><span>${body}</span></div>`;
+  const row = (cls, head, body, hl) =>
+    `<div class="lrow${hl?' lrow-hl':''}"><span><b class="${cls}" style="font-weight:600">${head}</b>${body?` — ${body}`:""}</span></div>`;
   if(a.type === "exit"){
-    // weak names get a MINI ladder (context high → price → sell line) — no buy zone or
+    // weak names get a MINI ladder (context high → price → exit) — no buy zone or
     // target, because the app isn't suggesting an entry. Keeps every read consistent.
     let rows = "";
     if(d.high_52w_str)
-      rows += row(esc(d.high_52w_str), "lp-ink2", "Its 1-year high — context for how far it has slipped.");
-    rows += row(esc(d.price_str), "", "Current price — if you own it, the line below is the one to watch.", true);
+      rows += row("lp-ink2", `1-year high · ${esc(d.high_52w_str)}`, "context for how far it has slipped.");
+    rows += row("", `Current price · ${esc(d.price_str)}`, "if you own it, the line below is the one to watch.", true);
     const sv = L.stop!=null ? L.stop : L.swing_low;
     if(sv!=null)
-      rows += row(fmtMoney(sv, d.currency), "lp-red", "Sell line — ends a day below this → sell it. Don't own it? Just skip it.");
+      rows += row("lp-red", `Exit · ${fmtMoney(sv, d.currency)}`, "ends a day below this → sell it. Don't own it? Just skip it.");
     return rows;
   }
   let rows = "";
   const rr = dt.reward_risk;
   const rrTxt = rr ? ` Reward for the risk: ${rr.ratio!=null?`about ${rr.ratio} to 1 — `:""}${esc(rr.note)}.` : "";
-  if(dt.target && dt.target.value_str)
-    rows += row(esc(dt.target.value_str), "lp-ink2", `${esc(dt.target.note)}.${rrTxt}`);
-  else if(dt.target){  // truly at its 1-year high — anchor the top rung with that high
-    const note = String(dt.target.note||""); const Note = note.charAt(0).toUpperCase()+note.slice(1);
-    rows += row(d.high_52w_str?esc(d.high_52w_str):"—", "lp-ink2", `${esc(Note)}.${rrTxt}`);
+  if(dt.target && dt.target.value_str){
+    const isRecent = String(dt.target.note||"").includes("recent");
+    rows += row("lp-ink2", `Target — ${isRecent?"recent high":"1-year high"} · ${esc(dt.target.value_str)}`,
+                `${isRecent?"room above":"the next ceiling overhead"}.${rrTxt}`);
+  } else if(dt.target){  // truly at its 1-year high — no ceiling above to measure to
+    rows += row("lp-ink2", `Target — none`,
+                `at its 1-year high${d.high_52w_str?` (${esc(d.high_52w_str)})`:""}, no ceiling above to measure against.${rrTxt}`);
   }
-  const nowTxt = {buy:"Current price — a good spot to buy (see the box above).",
-                  wait:"Current price — wait for now (see the box above).",
-                  none:"Current price."}[a.type] || "Current price.";
-  rows += row(esc(d.price_str), "", nowTxt, true);
+  // The price rung says WHERE the price sits vs the buy zone below it, then the action
+  // word (user-approved option B, 2026-07-18; replaces "(see the box above)"). Derived
+  // from the same numbers as the zone rung, so the two can never disagree. NUMERIC
+  // zone.high only — parsing high_str would hit the GBp 100× trap.
+  let nowTxt = "";
+  if(a.type === "buy" || a.type === "wait"){
+    const act = a.type === "buy" ? "a good spot to buy." : "wait for now.";
+    const zHi = sp && sp.zone && typeof sp.zone.high === "number" ? sp.zone.high : null;
+    const p = typeof d.price === "number" ? d.price : null;
+    if(zHi != null && p != null && p >= zHi){
+      const gap = (p - zHi) / p;
+      const wherept = gap <= 0.02 ? "at the top of the buy zone"
+                    : gap <= 0.06 ? "just above the buy zone"
+                    : "well above the buy zone";
+      nowTxt = `${wherept} — ${act}`;
+    } else nowTxt = act;
+  }
+  rows += row("", `Current price · ${esc(d.price_str)}`, nowTxt, true);
   let small = "";
   if(sp && (sp.items||[]).length){
     const num = s => parseFloat(String(s).replace(/[^0-9.]/g,"")) || 0;
@@ -409,18 +529,17 @@ function ladderHtml(d){
     const zoneStr = sp.zone.single ? esc(sp.zone.high_str) : `${esc(sp.zone.low_str)}–${esc(sp.zone.high_str)}`;
     const names = inZone.map(it=>`${esc(it.label)} ${esc(it.value_str)}`).join(" · ");
     const zoneTxt = (a.type==="wait" && a.number)
-      ? "Buy zone — dips here and steadies → good spot to buy."
-      : "Pull-back zone — if it dips, buyers tend to step in here.";
-    rows += row(zoneStr, "lp-green", `${zoneTxt} Supports: ${names}.`);
+      ? "dips here and steadies → good spot to buy."
+      : "if it dips, buyers tend to step in here.";
+    rows += row("lp-green", `Buy zone · ${zoneStr}`, `${zoneTxt} Supports: ${names}.`);
     if(deeper.length) small += `Deeper floors: ${deeper.map(it=>`${esc(it.label)} ${esc(it.value_str)}`).join(" · ")}`;
   }
   const stopV = L.stop!=null ? L.stop : L.swing_low;
   if(stopV != null){
     const tight = L.swing_low!=null && stopV > L.swing_low;
-    rows += row(fmtMoney(stopV, d.currency), "lp-red",
-                tight
-                  ? "Safety line (tight — about 1.5× its usual daily swing below) — if you buy and it ends a day below this, sell."
-                  : "Safety line (recent low) — if you buy and it ends a day below this, sell.");
+    rows += row("lp-red",
+                `Exit · ${fmtMoney(stopV, d.currency)}${tight?" (tight — about 1.5× its usual daily swing below)":""}`,
+                "if you buy and it ends a day below this, sell.");
   }
   if(dt.period) small += `${small?"<br>":""}${esc(dt.period.text)}`;
   if(small) rows += `<div class="lsmall">${small}</div>`;
@@ -472,22 +591,51 @@ function buildChart(d){
     label, data, borderColor: color, backgroundColor: color,
     borderWidth: dash ? 1.3 : 2, borderDash: dash || [], yAxisID: axis || "y",
     pointRadius: 0, pointHoverRadius: 3, tension: 0.15, spanGaps: true });
-  const flat = (label, v, color)=>({
-    label: `${label} ${fmtMoney(v, cur)}`, data: Array(n).fill(v),
-    borderColor: color, borderWidth: 1.2, borderDash: [2,3], yAxisID: "y",
-    pointRadius: 0, pointHoverRadius: 0 });
-
   const ds = [ line("Price", ch.closes, "#1B2733", null, "y") ];
-  if(ch.ma20)  ds.push(line("20-day", ch.ma20, "#378ADD", [5,3], "y"));
-  if(ch.ma50)  ds.push(line("50-day", ch.ma50, "#1D9E75", [5,3], "y"));
-  if(ch.ma200) ds.push(line("200-day", ch.ma200, "#BA7517", [5,3], "y"));
+  if(ch.ma20)  ds.push(line("20-day", ch.ma20, "#378ADD", [5,4], "y"));
+  if(ch.ma50)  ds.push(line("50-day", ch.ma50, "#0E7C66", [7,4], "y"));
+  if(ch.ma200) ds.push(line("200-day", ch.ma200, "#BA7517", [2,3], "y"));
   if(ch.rs)    ds.push(line("vs market (RS)", ch.rs, "#7F77DD", null, "y1"));
-  const targ = isExit ? null : (L.target!=null ? L.target : L.swing_high),
-        buy = isExit ? null : L.buy,
+
+  // Price LEVELS are annotations, not datasets — so they carry labelled pills on the
+  // chart itself and never appear in the hover tooltip or the legend (user ask,
+  // 2026-07-15). Buy zone = a shaded band (you buy an area, not a tick — Sanat cue);
+  // exit = red dashed; target = green with its source named.
+  // target: ONLY the engine's reconciled target. Do NOT fall back to swing_high — the
+  // engine sets lines.target = null on purpose when the stock is at its 1-year high with
+  // no ceiling above, and drawing swing_high there put a green "Target" line (mislabelled
+  // "1-year high") at or below the current price (audit, frontend H1, 2026-07-17).
+  const targ = isExit ? null : (L.target!=null ? L.target : null),
         stop = L.stop!=null ? L.stop : L.swing_low;
-  if(targ != null) ds.push(flat("target", targ, "#B45309"));
-  if(buy  != null) ds.push(flat("buy", buy, "#1F9E5A"));
-  if(stop != null) ds.push(flat(isExit ? "sell" : "stop", stop, "#E5484D"));
+  const pill = (bg)=>({display:true, backgroundColor:bg, color:"#fff",
+                       font:{size:11, weight:600}, padding:4, borderRadius:5, position:"end"});
+  const anns = {};
+  // Buy-zone band bounds: use the NUMERIC zone the backend sends (raw quote units, same
+  // axis as the price line). The old code parsed the FORMATTED strings ("£12.34"), which
+  // on a pence-denominated LSE axis drew the band 100x too low (audit, frontend H3).
+  const sp = d.supports, z = (sp && sp.zone) || null;
+  const zLo = (!isExit && z) ? z.low : null;
+  const zHi = (!isExit && z) ? z.high : null;
+  if(zLo && zHi && zHi > zLo){
+    anns.zone = {type:"box", yMin:zLo, yMax:zHi,
+      backgroundColor:"rgba(14,124,102,0.13)", borderColor:"rgba(14,124,102,0.35)", borderWidth:1,
+      label:{display:true, content:`Buy zone ${sp.zone.low_str}–${sp.zone.high_str}`,
+             position:{x:"start", y:"center"}, color:"#0E7C66",
+             font:{size:11, weight:600}, backgroundColor:"rgba(255,255,255,0.75)"}};
+  } else if(!isExit && L.buy != null){
+    anns.buy = {type:"line", yMin:L.buy, yMax:L.buy, borderColor:"#1F9E5A", borderWidth:1.4,
+      label:{...pill("#1F9E5A"), content:`Buy ${fmtMoney(L.buy, cur)}`}};
+  }
+  if(stop != null)
+    anns.exit = {type:"line", yMin:stop, yMax:stop, borderColor:"#B42318",
+      borderWidth:1.6, borderDash:[6,5],
+      label:{...pill("#B42318"), content:`Exit ${fmtMoney(stop, cur)}`}};
+  if(targ != null){
+    const tn = String((d.detail && d.detail.target && d.detail.target.note) || "");
+    const src = tn.includes("recent") ? " — recent high" : (tn.includes("1-year") ? " — 1-year high" : "");
+    anns.target = {type:"line", yMin:targ, yMax:targ, borderColor:"#0E7C66", borderWidth:1.4,
+      label:{...pill("#0E7C66"), content:`Target ${fmtMoney(targ, cur)}${src}`}};
+  }
 
   // Probability cone — the stock's own volatility fanned out ±1σ/±2σ into the FUTURE.
   // Four datasets (bottom+top of each band) with the historical part null, filled between.
@@ -512,12 +660,15 @@ function buildChart(d){
       responsive: true, maintainAspectRatio: false, animation: false,
       interaction: { mode: "index", intersect: false },
       plugins: {
+        annotation: { annotations: anns },
         legend: { position: "top",
           labels: { boxWidth: 26, boxHeight: 2, font: { size: 13 }, color: "#5A6776", padding: 14,
             filter: (item, data)=> !(data.datasets[item.datasetIndex]||{}).cone } },   // hide cone bands
         tooltip: { titleFont: { size: 13 }, bodyFont: { size: 13 },
           filter: c => !c.dataset.cone,                                                 // no cone in tooltip
-          callbacks: { label: c =>
+          callbacks: {
+            title: items => items.length ? fullDate(labels[items[0].dataIndex]) : "",   // whole date, always
+            label: c =>
           `${c.dataset.label}: ${c.parsed.y != null ? (c.dataset.yAxisID === "y1" ? Math.round(c.parsed.y) : fmtMoney(c.parsed.y, cur)) : ""}` } },
         zoom: {
           zoom: { wheel: { enabled: true }, pinch: { enabled: true },
@@ -532,7 +683,7 @@ function buildChart(d){
         y: { position: "left", grid: { color: "#EDF0F2" },
              ticks: { font: { size: 12 }, callback: v => fmtMoney(v, cur) } },
         y1: { position: "right", display: !!ch.rs, grid: { drawOnChartArea: false },
-              title: { display: true, text: "RS vs market", color: "#7F77DD", font: { size: 12 } },
+              title: { display: true, text: "RS vs market (=100 at start)", color: "#7F77DD", font: { size: 12 } },
               ticks: { font: { size: 12 }, color: "#7F77DD" } }
       }
     }
@@ -540,22 +691,56 @@ function buildChart(d){
   el.ondblclick = () => { if(chartInst && chartInst.resetZoom) chartInst.resetZoom(); };
 }
 
-async function loadTeaser(){
-  const el = $("#teaser");
+let homePollT = null, homePollN = 0;   // study-list auto-fill poller (day's first scan)
+async function loadHome(){
+  // Home load: market mood + the top Buy-zone names. A cold cache KICKS the scan in a
+  // server background thread; we show "Building today's list…" and re-poll until the
+  // rows appear — the user never has to tap anything.
+  const el = $("#teaser"), sub = $("#teaserSub"), strip = $("#homeStrip"), key = $("#teaserKey");
   const m = market;   // remember which market this request is for
-  el.innerHTML = `<span class="spin"></span> <span class="muted small">Finding today’s movers…</span>`;
+  clearTimeout(homePollT);
+  el.innerHTML = `<span class="spin"></span> <span class="muted small">Checking today’s market…</span>`;
+  sub.textContent = ""; key.style.display = "none";
   try{
-    const r = await fetch(`/api/strong?market=${m}&n=6`);   // light preview, not the full scan
+    const r = await fetch(`/api/home?market=${m}`);
     const d = await r.json();
     if(m !== market) return;   // user switched market while this was loading — drop it
-    const all = (d.top||[]).slice(0,3);
-    if(!all.length){ el.innerHTML = `<span class="small muted">No clear movers right now.</span>`; return; }
-    el.innerHTML = all.map(it=>{
-      return `<div class="listrow" style="padding:9px 0" data-ticker="${esc(it.ticker)}" data-market="${esc(it.market||'')}">
-        <span style="display:flex;align-items:center;gap:8px">${esc(it.name)}<span class="tkr">${esc(tkShort(it.ticker))}</span></span>
-        <span class="small muted">${esc(it.price_str)} ›</span></div>`;
+    const st = stripHtml(d.regime);
+    if(st){ strip.className = `mood ${st.cls}`; strip.innerHTML = moodHtml(st); }
+    else{ strip.className = "mood hidden"; }
+    $("#seeAll").textContent = d.buyzone_count ? `see all ${d.buyzone_count} ›` : "see all ›";
+    if(!d.scanned){
+      if(d.building && homePollN < 15){       // ~2.5 min cap, then fall back honestly
+        homePollN++;
+        el.innerHTML = `<span class="spin"></span> <span class="small muted">Building today’s list —
+          about a minute. It fills in by itself; you can search meanwhile.</span>`;
+        homePollT = setTimeout(()=>{ if(current==="search" && m===market) loadHome(); }, 10000);
+      } else {
+        el.innerHTML = `<span class="small muted">Couldn’t build the list just now — tap “see all” to retry.</span>`;
+      }
+      return;
+    }
+    homePollN = 0;
+    if(!(d.study||[]).length){
+      el.innerHTML = `<span class="small muted">No leaders resting near support right now —
+        tap “see all” for the full picture.</span>`;
+      return;
+    }
+    sub.textContent = `${d.buyzone_count} leader${d.buyzone_count===1?"":"s"} resting near support — worth a look, not a signal.`;
+    key.style.display = "";
+    el.innerHTML = d.study.map(it=>{
+      const chg = (it.change==null) ? "" :
+        ` <span class="${it.change>=0?"chgup":"chgdn"}">${it.change>=0?"+":""}${(+it.change).toFixed(1)}%</span>`;
+      const dot = it.ready==="hot" ? "d-amber" : "d-green";
+      return `<div class="listrow" style="padding:10px 0" data-ticker="${esc(it.ticker)}" data-market="${esc(it.market||"")}">
+        <span style="display:flex;align-items:center;gap:8px;min-width:0;flex:1">
+          <i class="dot ${dot}" style="flex:none"></i>
+          <span style="font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0;max-width:55%">${esc(it.name)}</span>
+          <span class="tkr" style="flex:none">${esc(tkShort(it.ticker))}</span>
+          <span class="whyin">· ${esc(it.why||"")}</span></span>
+        <span class="small muted" style="flex:none;white-space:nowrap">${esc(it.price_str)}${chg} ›</span></div>`;
     }).join("");
-  }catch(e){ el.innerHTML = `<span class="small muted">Couldn’t load movers — tap “see all”.</span>`; }
+  }catch(e){ el.innerHTML = `<span class="small muted">Couldn’t load — tap “see all”.</span>`; }
 }
 
 let strongSeq = 0;   // guards against a SLOW scan landing after a newer one was requested
@@ -621,7 +806,7 @@ function laneItems(d, v){
     return all.filter(it=>(it.lanes||[]).includes("buyzone"))
               .sort((a,b)=>(a.dip_q??9)-(b.dip_q??9));
   if(v==="quiet")  return all.filter(it=>(it.lanes||[]).includes("newhigh"));
-  if(v==="early")  // volume RANKS an early turn (JLaw: quiet accumulation = the
+  if(v==="early")  // volume RANKS an early turn (quiet accumulation = the
                    // institutional footprint) — busiest names float to the top.
     return all.filter(it=>(it.lanes||[]).includes("early"))
               .sort((a,b)=>(b.rvol||0)-(a.rvol||0));
@@ -672,17 +857,33 @@ const VIEW_LABEL = {buyzone:"Buy zone", early:"Early", quiet:"Quiet leaders", fa
 // the market strip — the regime in plain words (never the Risk-On/Off jargon)
 function stripHtml(regime){
   const map = {
-    "Risk-On":  {cls:"a-green", txt:"Market check: healthy — good hunting. Trend is supportive."},
-    "Neutral":  {cls:"a-amber", txt:"Market check: so-so — be choosy. Fewer, better trades."},
-    "Risk-Off": {cls:"a-red",   txt:"Market check: weak — go slow. Protecting money comes first."},
+    "Risk-On":  {cls:"a-green", lead:"Market mood: trending.", tail:"Good conditions for buyers."},
+    "Neutral":  {cls:"a-amber", lead:"Market mood: consolidating.", tail:"Be selective with new buys — fewer, better trades."},
+    "Risk-Off": {cls:"a-red",   lead:"Market mood: under pressure.", tail:"Protect money first — go slow with new buys."},
   }[regime];
-  return map ? {cls:map.cls, txt:map.txt} : null;
+  return map || null;
+}
+// one shared renderer so home + screener banners can never drift apart
+function moodHtml(st, extra){
+  return `<span class="mooddot"></span><span><b>${st.lead}</b> ${st.tail}${extra||""}</span>`;
 }
 
+// the dot legend is TAB-AWARE: Quiet leaders are near their highs, so almost every row
+// is amber there — a "green = calm" line would describe a dot that (nearly) never
+// appears (audit #9). Dots are now READ-VERIFIED (2026-07-18), so a rare Quiet green is
+// possible — the legend shows the two-dot key only when one actually exists in the tab.
+const DOTKEY = {
+  quiet: `<span><i class="dot d-amber"></i>all near their highs — buy the next dip, not here</span>`,
+  _default: `<span><i class="dot d-green"></i>at a calm spot</span>`
+    + `<span><i class="dot d-amber"></i>extended or moving hard — wait for a dip</span>`,
+};
 function renderStrongView(){
   const d = lastStrong; if(!d) return;
   const items = viewItems(d);
   $("#strongSummary").innerHTML = VIEW_INTRO[strongView] || "";
+  const anyGreen = items.some(it => it.ready === "calm");
+  $("#dotkey").innerHTML = (strongView === "quiet" && anyGreen)
+    ? DOTKEY._default : (DOTKEY[strongView] || DOTKEY._default);
   $("#strongBody").innerHTML = sectorGroup ? sectorBoxes(items) : flatCard(items);
   const shown = items.filter(matchesQ).length;
   $("#strongCount").textContent = strongQuery
@@ -694,10 +895,10 @@ function renderStrongView(){
     b.textContent = `${VIEW_LABEL[v]} · ${laneItems(d, v).length}`;
   });
   const st = stripHtml(d.regime), el = $("#mktStrip");
-  if(st){ el.className = `mktstrip ${st.cls}`;
+  if(st){ el.className = `mood ${st.cls}`;
     const nf = d.nifty_live_pct;
-    el.textContent = st.txt + (nf!=null ? ` Nifty ${nf>0?'+':''}${nf}% now (live).` : ""); }
-  else el.className = "mktstrip hidden";
+    el.innerHTML = moodHtml(st, nf!=null ? ` Nifty ${nf>0?'+':''}${nf}% now (live).` : ""); }
+  else el.className = "mood hidden";
 }
 
 function renderStrong(d){ lastStrong = d; renderStrongView(); }
@@ -729,8 +930,8 @@ document.querySelectorAll("#strongToggle .pill[data-v]").forEach(b=>{
   });
 });
 
-// load the home-screen teaser (top 3 leaders) on first paint
-loadTeaser();
+// load the home screen (mood strip + study list) on first paint
+loadHome();
 </script>
 </body>
 </html>

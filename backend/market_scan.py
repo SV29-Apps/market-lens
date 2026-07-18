@@ -80,14 +80,16 @@ def friendly_sector(sector: str, industry: str, ticker: str) -> str:
     for suf in (".NS", ".BO", ".L"):
         if tk.endswith(suf):
             tk = tk[:-len(suf)]
-    ind = (industry or "").lower()
+    # NaN guard: TradingView sends float('nan') for a missing industry/sector, and
+    # NaN is truthy — `(x or "")` does NOT catch it (US scan crash, 2026-07-15).
+    ind = (industry if isinstance(industry, str) else "").lower()
     if tk in _SEMI_EQUIP:
         return "Chips"
     for kw, bucket in _SECTOR_RULES:
         if kw in ind:
             return bucket
     # fall back to a couple of the broad `sector` labels if industry didn't match
-    sec = (sector or "").lower()
+    sec = (sector if isinstance(sector, str) else "").lower()
     if "technology" in sec or "electronic" in sec:
         return "Software & Internet"
     if "health" in sec:
@@ -109,6 +111,53 @@ def _classify(close, sma50, change, high52w) -> str:
     near_high = high52w and close >= high52w * 0.95             # within ~5% of the 1-year high
     # matches the deep read's "wait" triggers so the list and the read agree.
     return "wait" if (extended or popped or near_high) else "buy"
+
+
+def industry_breadth(market_key: str) -> dict:
+    """GROUP HEALTH (2026-07-18, step-1 SHOW-ONLY): one whole-market TradingView pass
+    -> per-industry breadth {industry: {n, below20, hardweek, health}}. The read shows
+    it as a check line; it NEVER changes a verdict (that's the separately-gated step 2).
+    Universe is deliberately WIDER than the momentum floors (lower price/mcap, no
+    performance gates) so real-but-small groups get counted; a group with fewer than
+    8 members returns NO reading — silence beats a guess (the misclassification guard:
+    a wrongly-bucketed name lands in a thin group and simply gets no line)."""
+    p = _SCAN.get((market_key or "").strip().upper())
+    if not p:
+        return {}
+    try:
+        from tradingview_screener import Query, col
+    except Exception:  # noqa: BLE001
+        return {}
+    flt = [col("type") == "stock", col("typespecs").has(["common"]),
+           col("close") >= p["price_min"] / 3,
+           col("market_cap_basic") >= p["mcap_min"] / 4]
+    if p["exchange"]:
+        flt.append(col("exchange") == p["exchange"])
+    try:
+        _, df = (Query().set_markets(p["market"])
+                 .select("name", "close", "SMA20", "Perf.W", "industry")
+                 .where(*flt).order_by("market_cap_basic", ascending=False)
+                 .limit(3000).get_scanner_data())
+    except Exception:  # noqa: BLE001
+        return {}
+    if df is None or df.empty:
+        return {}
+    df = df.dropna(subset=["industry", "close", "SMA20"])
+    out = {}
+    for ind, gdf in df.groupby("industry"):
+        n = len(gdf)
+        if n < 8:
+            continue
+        b20 = int((gdf["close"] < gdf["SMA20"]).sum())
+        hw = int((gdf["Perf.W"] < -4).sum())
+        if b20 / n >= 0.6 or hw / n >= 0.4:
+            health = "breaking"
+        elif b20 / n >= 0.4:
+            health = "mixed"
+        else:
+            health = "healthy"
+        out[ind] = {"n": n, "below20": b20, "hardweek": hw, "health": health}
+    return out
 
 
 _SNAP_COLS = ["description", "sector", "industry", "Perf.W", "Perf.1M",
@@ -288,6 +337,9 @@ def momentum_list(market_key: str, cap: int = 400) -> list[dict]:
     near_factor = 1 - p["near_high"] / 100.0
     cols = ["name", "description", "close", "change", "Perf.W", "Perf.1M", "Perf.3M",
             "Perf.6M", "SMA20", "SMA50", "ATR", "relative_volume_10d_calc",
+            "average_volume_10d_calc",   # <- the 10-day-avg-turnover floor reads this;
+            # it was NEVER selected, so the whole liquidity gate below was DEAD CODE and
+            # OTC/micro names slipped into Buy zone (audit #7, 2026-07-17).
             "price_52_week_high", "market_cap_basic", "sector", "industry"]
 
     merged: dict[str, dict] = {}

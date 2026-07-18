@@ -78,7 +78,9 @@ def _round(x, n=2):
 
 # Country hint -> set of Yahoo exchange codes (for disambiguating a name across markets).
 COUNTRY_EXCH = {
-    "US": {"NMS", "NYQ", "NGM", "PCX", "ASE", "BTS"},
+    # NCM = Nasdaq Capital Market (small caps, e.g. AEHR) — leaving it out made the US
+    # hint filter DROP the real company and resolve the ticker to a lookalike ETF.
+    "US": {"NMS", "NYQ", "NGM", "NCM", "PCX", "ASE", "BTS"},
     "IN": {"NSI", "BSE"}, "INDIA": {"NSI", "BSE"},
     "UK": {"LSE", "IOB"}, "GB": {"LSE", "IOB"},
     "DE": {"GER", "FRA"}, "FR": {"PAR"}, "NL": {"AMS"},
@@ -118,9 +120,16 @@ def resolve(name_or_ticker: str, market: Optional[str] = None) -> dict:
         if hinted:
             cands = hinted
 
+    # Exact ticker typed → that candidate WINS, wherever Yahoo ranked it. Without this
+    # re-rank, "AEHR" resolved to AEHG (a 2X leveraged ETF with "AEHR" in its name).
+    typed = name_or_ticker.strip().upper()
+    exacts = [c for c in cands if c["symbol"].upper() == typed]
+    if exacts:
+        cands = exacts + [c for c in cands if c["symbol"].upper() != typed]
+
     top = cands[0]
     # Exact ticker typed → trust it (cross-listings are not ambiguity).
-    exact = name_or_ticker.strip().upper() == top["symbol"].upper()
+    exact = typed == top["symbol"].upper()
     # Genuine ambiguity only if another candidate is a DIFFERENT company (name mismatch),
     # not just the same company cross-listed on another exchange.
     import difflib
@@ -285,6 +294,13 @@ def _gaps(df: pd.DataFrame, lookback=10, thresh=2.0) -> list:
 
 
 def _swing(df: pd.DataFrame, win=20) -> dict:
+    # swing_high feeds the TARGET (resistance overhead) — today's high is a valid recent
+    # high, so keep it. #6's danger (an exit at today's fresh low = near-zero risk) is
+    # handled downstream in plain_read: _floored_stop forces every exit at least ~1x ATR
+    # below the entry, so a brand-new-low bar can never produce a coin-flip stop. (An
+    # earlier version excluded today's bar here and wrongly dropped swing_high below the
+    # 2%-above-price target threshold, cascading FIG's target to its far 1-year high and
+    # blowing R:R up to 41.6 — reverted 2026-07-17.)
     recent = df.tail(win)
     return {"swing_high": _round(recent["high"].max()), "swing_low": _round(recent["low"].min())}
 
@@ -304,9 +320,18 @@ def relative_strength(stock: pd.DataFrame, index: pd.DataFrame) -> dict:
     new_high_lb = min(126, len(rs))  # ~6 months
     rs_new_high = bool(rs.iloc[-1] >= rs.tail(new_high_lb).max() * 0.999)
     out = {"available": True,
+           # NAMING NOTE (audit M7, verified 2026-07-17): despite the key, this is the RS
+           # line's POSITION vs its own 50-bar mean — i.e. "is relative strength SUSTAINED",
+           # not the raw 10-bar direction. This is deliberate: I measured a raw 10-bar slope
+           # against this on 29 names — it disagreed on 13 and would FLIP 7 verdict tags,
+           # and the flips were WRONG (MSFT/CRM/TEAM, genuine broken laggards, would jump
+           # from "avoid" to "wait" on a transient RS uptick — undoing the structural-weak
+           # fix). The mean-based measure is the more robust leadership signal; the field
+           # name is the only thing that's off. `rs_vs_mean` is the honest alias.
            "rs_line_slope": "rising" if rs.iloc[-1] > rs_ma.iloc[-1] else "falling",
+           "rs_vs_mean": "above" if rs.iloc[-1] > rs_ma.iloc[-1] else "below",
            "rs_at_new_high_6m": rs_new_high,
-           "leader_flag": rs_new_high and rs.iloc[-1] > rs_ma.iloc[-1]}
+           "leader_flag": bool(rs_new_high and rs.iloc[-1] > rs_ma.iloc[-1])}
     for label, bars in (("1m", 21), ("3m", 63), ("6m", 126)):
         sr, ir = _rel_return(j["s"], bars), _rel_return(j["i"], bars)
         out[f"stock_vs_index_{label}"] = (
@@ -433,9 +458,14 @@ def news_sentiment(symbol: str, days: int = 14, max_articles: int = 50) -> dict:
     key = os.environ.get("ALPHAVANTAGE_API_KEY", "").strip()
     if not key:
         return {"have": False, "reason": "no_key"}
-    # Alpha Vantage expects a plain US-style ticker; strip our exchange suffixes (.NS/.L).
-    # Coverage is US-centric, so India/UK names usually return no feed -> {have: False}.
-    av_ticker = symbol.split(".")[0].upper()
+    # NON-US GUARD (audit M10): AV coverage is US-centric and keyed on the bare ticker.
+    # Truncating "TITAN.NS" -> "TITAN" would fetch the sentiment of an UNRELATED US "TITAN"
+    # and mis-attribute it to the Indian stock. Only query when the symbol is a plain US
+    # ticker (no exchange suffix). India/UK reads simply run news-free (they already do in
+    # prod anyway — AV is throttled on Render's shared IP).
+    if "." in symbol:
+        return {"have": False, "reason": "non_us_symbol"}
+    av_ticker = symbol.upper()
     since = time.strftime("%Y%m%dT0000", time.gmtime(time.time() - days * 86400))
     q = urllib.parse.urlencode({"function": "NEWS_SENTIMENT", "tickers": av_ticker,
                                 "time_from": since, "sort": "LATEST",
@@ -494,6 +524,72 @@ def rr(entry: float, stop: float, target: float) -> dict:
             "r_multiple": _round(reward / risk, 2) if risk else None}
 
 
+def _freshness(meta: dict, as_of: Optional[str], bar_date: str) -> dict:
+    """How fresh the last bar is, from Yahoo meta. `intraday` = the market is in its
+    regular session RIGHT NOW, so the last daily bar is a live PARTIAL bar (its volume is
+    only part of a day, and its close is a moving last price). `session_frac` = elapsed
+    fraction of today's session (to time-adjust that partial volume, audit H3). For a
+    backtest `as_of` read the last bar is historical, so never intraday."""
+    if as_of:
+        return {"bar_date": bar_date, "as_of": as_of, "intraday": False,
+                "session_frac": None, "observed_ts": None}
+    rmt = meta.get("regularMarketTime")
+    reg = (meta.get("currentTradingPeriod") or {}).get("regular") or {}
+    start, end = reg.get("start"), reg.get("end")
+    now = time.time()
+    intraday = bool(start and end and start <= now < end)
+    frac = max(0.0, min(1.0, (now - start) / (end - start))) if (intraday and end > start) else None
+    return {"bar_date": bar_date, "as_of": None, "intraday": intraday,
+            "session_frac": frac, "observed_ts": rmt}
+
+
+def _volume_block(daily: pd.DataFrame, fresh: dict) -> dict:
+    """Today vs the 50-day average — but time-adjusted when the last bar is a live partial
+    (audit H3: raw partial-vs-full-day made every intraday read look "calm/quiet"). Just
+    after the open (frac < 5%) the ratio is meaningless -> None, and the read degrades to
+    'no clear reading yet' instead of a false 'calm'."""
+    vl = daily["volume"].iloc[-1]
+    v_last = None if (vl is None or (isinstance(vl, float) and math.isnan(vl))) else int(vl)
+    a50 = daily["volume"].tail(50).mean()
+    avg50 = None if math.isnan(a50) else int(a50)
+    ratio, adjusted = None, False
+    if v_last is not None and avg50:
+        if fresh.get("intraday"):
+            frac = fresh.get("session_frac")
+            if frac and frac >= 0.05:
+                ratio, adjusted = _round(v_last / (avg50 * frac)), True
+            # else: session barely open -> leave ratio None (no honest reading yet)
+        else:
+            ratio = _round(v_last / avg50)          # a completed day (or as_of): honest
+    return {"last": v_last, "avg50": avg50, "ratio_vs_avg50": ratio,
+            "session_adjusted": adjusted}
+
+
+def _trend_memory(df: pd.DataFrame) -> dict:
+    """The read's small MEMORY (2026-07-18) — two facts about the recent PAST that a
+    last-bar snapshot can't see, both computed from bars already fetched:
+    - days_below_50: consecutive completed sessions the close has been under the 50-day
+      line, counting back from the latest bar (0 = above it now). JLaw gives a name
+      ~4-6 trading days to reclaim the line before calling the trend broken.
+    - worst_drop_3d: the most negative 1-day % change across the last 3 completed
+      sessions. A green "buyable" must not fire the day after a high-energy decline
+      (the NTAP case: -7.1% on 15 Jul was invisible to a 1-day lookback on the 16th).
+    """
+    c = df["close"]
+    out = {"days_below_50": None, "worst_drop_3d": None}
+    if len(c) > 3:
+        out["worst_drop_3d"] = _round(((c / c.shift(1) - 1) * 100).tail(3).min())
+    if len(c) >= 50:
+        below = c < c.rolling(50).mean()
+        n = 0
+        for v in below.iloc[::-1]:
+            if not bool(v):
+                break
+            n += 1
+        out["days_below_50"] = n
+    return out
+
+
 def compute_features(symbol: str, benchmark: str = "^GSPC", as_of: Optional[str] = None,
                      light: bool = False) -> dict:
     # light=True skips the weekly bars (a 3rd Yahoo fetch/name) — the plain read never
@@ -504,9 +600,11 @@ def compute_features(symbol: str, benchmark: str = "^GSPC", as_of: Optional[str]
     idx = get_ohlcv(benchmark, rng="2y", interval="1d", as_of=as_of)
     meta = daily.attrs.get("meta", {})
     c = daily["close"]
+    fresh = _freshness(meta, as_of, str(daily.index[-1].date()))
     feat = {
         "symbol": symbol,
         "currency": meta.get("currency"),
+        "freshness": fresh,
         "last_close": _round(c.iloc[-1]),
         "pct_change_1d": _round((c.iloc[-1] / c.iloc[-2] - 1) * 100) if len(c) > 1 else None,
         "fifty_two_week": {
@@ -522,11 +620,8 @@ def compute_features(symbol: str, benchmark: str = "^GSPC", as_of: Optional[str]
             "last_candle": _candle(daily),
             "recent_gaps": _gaps(daily),
             "swing": _swing(daily, 20),
-            "volume": {
-                "last": int(daily["volume"].iloc[-1]) if not math.isnan(daily["volume"].iloc[-1]) else None,
-                "avg50": int(daily["volume"].tail(50).mean()),
-                "ratio_vs_avg50": _round(daily["volume"].iloc[-1] / daily["volume"].tail(50).mean()),
-            },
+            "volume": _volume_block(daily, fresh),
+            "trend_memory": _trend_memory(daily),
         },
         "weekly": None if weekly is None else {
             "moving_averages": _ma_block(weekly, [10, 20, 50]),

@@ -234,6 +234,17 @@ def _read_one(ticker: str, market: str | None, with_chart: bool = True) -> dict:
         if sym:
             news = _news_for(sym)
     read = build_plain_read(bundle, news=news)
+    if read.get("ok"):
+        # honest freshness stamp (audit H1): never present a price as "now" unlabelled.
+        fr = read.get("freshness") or {}
+        if fr.get("as_of"):
+            read["as_of_str"] = f"as of {fr['as_of']} (historical)"
+        elif live:                       # Kite live overlay (IN) — a true real-time price
+            read["as_of_str"] = "live price"
+        elif fr.get("intraday"):
+            read["as_of_str"] = "live — updates through the trading day"
+        elif fr.get("bar_date"):
+            read["as_of_str"] = f"at the {fr['bar_date']} close"
     if read.get("ok") and live:
         read["live"] = {"price_str": _money(live["price"], read.get("currency")),
                         "pct_1d": round(live["pct_1d"], 1)}
@@ -249,6 +260,10 @@ def _read_one(ticker: str, market: str | None, with_chart: bool = True) -> dict:
             snap = snapshot(read["symbol"], mk)
             if snap:
                 read["stats"] = snap
+                try:   # group-health check line — show-only, never touches the verdict
+                    _group_check(read, snap, mk)
+                except Exception:  # noqa: BLE001
+                    pass
         except Exception:  # noqa: BLE001
             pass
         try:  # 1-2 lines about the business — best-effort
@@ -286,15 +301,19 @@ def _add_period(read: dict) -> None:
                 and entry and target and target > entry * 1.02):
             return
         rets = np.diff(np.log(closes))
-        dvol = float(np.std(rets))
+        dvol = float(np.std(rets, ddof=1))                    # sample stdev (audit L14)
         if dvol <= 0:
             return
-        move = (target - entry) / entry
+        # LOG move to match the log-return vol (audit M8: mixing a simple % move with a
+        # log-return sigma over-stated the horizon by ~30%). (move/dvol)^2 is the number of
+        # DAYS at which this move is a ~1-sigma event — NOT a promise the target is reached
+        # (for a driftless walk the median time-to-target is unbounded). Word it honestly.
+        move = np.log(target / entry)
         weeks = max(1, round(((move / dvol) ** 2) / 5))       # ~5 trading days / week
         read.setdefault("detail", {})["period"] = {
             "weeks": weeks,
-            "text": f"typically ~{weeks} week{'s' if weeks != 1 else ''} to reach the target "
-                    f"(very rough — actual timing varies a lot)"}
+            "text": f"a move this size is roughly a normal ~{weeks}-week swing for it "
+                    f"(rough — this is not a prediction that it will get there)"}
     except Exception:  # noqa: BLE001
         pass
 
@@ -380,6 +399,120 @@ async def config():
     return {"ok": True, "markets": _ENABLED}
 
 
+# Yahoo exchange code -> (market pill, friendly label) for the search suggestions.
+# Only exchanges belonging to markets this app can actually read are listed —
+# suggesting a Frankfurt listing the read engine has no benchmark for is a dead end.
+_EXCH_UI = {
+    "NMS": ("US", "NASDAQ"), "NGM": ("US", "NASDAQ"), "NCM": ("US", "NASDAQ"),
+    "NYQ": ("US", "NYSE"), "PCX": ("US", "NYSE Arca"), "ASE": ("US", "NYSE Am."),
+    "BTS": ("US", "BATS"),
+    "NSI": ("IN", "NSE"), "BSE": ("IN", "BSE"),
+    "LSE": ("UK", "LSE"), "IOB": ("UK", "LSE IOB"),
+}
+
+
+def _sugg_search(q: str) -> list[dict]:
+    """One Yahoo search call -> suggestion items for enabled markets (may be [])."""
+    import urllib.parse
+    data = J._http_json(J.SEARCH_BASE + "?" + urllib.parse.urlencode(
+        {"q": q, "quotesCount": 10, "newsCount": 0}))
+    items = []
+    for x in data.get("quotes", []):
+        if not x.get("symbol") or x.get("quoteType") not in ("EQUITY", "ETF"):
+            continue
+        ui = _EXCH_UI.get(x.get("exchange", ""))
+        if not ui or ui[0] not in _ENABLED:
+            continue
+        items.append({"symbol": x["symbol"],
+                      "name": x.get("shortname") or x.get("longname") or x["symbol"],
+                      "market": ui[0], "exch": ui[1]})
+    return items
+
+
+@app.get("/api/suggest")
+def suggest(q: str = "", market: str = "US"):
+    """Type-ahead for the home search box: name/ticker candidates with their market,
+    so the user PICKS a stock instead of guessing what the box will resolve to.
+    Day-cached per (query, market); selected-market matches rank first.
+
+    SUFFIX FALLBACK (ABB case, 2026-07-15): Yahoo's plain search ranks the global
+    brand first — "ABB" returns the Swiss parent + US look-alikes and ABB.NS never
+    appears, so an Indian user got no Indian rows. When the selected market has an
+    exchange suffix (IN .NS / UK .L), the query is a bare single token, and the first
+    pass found nothing for that market, retry with the suffix and put those rows on
+    top (same trick the read path uses in _screen_resolved)."""
+    q = (q or "").strip()
+    if len(q) < 2:
+        return {"ok": True, "items": []}
+    mk = market.strip().upper()
+    key = f"sugg:{mk}:{q.lower()}"
+    hit = _cached(key)
+    if hit is not None:
+        return hit
+    try:
+        items = _sugg_search(q)
+        suffix = {"IN": ".NS", "UK": ".L"}.get(mk)
+        if (suffix and " " not in q and not q.upper().endswith((".NS", ".BO", ".L"))
+                and not any(it["market"] == mk for it in items)):
+            extra = _sugg_search(q + suffix)
+            seen = {it["symbol"] for it in extra}
+            items = extra + [it for it in items if it["symbol"] not in seen]
+    except Exception:  # noqa: BLE001  suggestions are best-effort — empty, not error
+        return {"ok": True, "items": []}
+    items.sort(key=lambda it: 0 if it["market"] == mk else 1)   # stable: Yahoo rank kept
+    out = {"ok": True, "items": items[:6]}
+    _put(key, out)
+    return out
+
+
+# Markets whose day's-first scan is currently being built by a background thread
+# (so repeated home polls don't stack threads on the single-flight lock).
+_BUILDING: set[str] = set()
+
+
+def _kick_scan(mk: str) -> None:
+    """Fire-and-forget: build today's momentum list in the background so the home
+    study list fills in by itself (~30-60s) instead of waiting for a "see all" tap.
+    _momentum_cached is single-flight, so this can never run two scans at once."""
+    if mk in _BUILDING:
+        return
+    _BUILDING.add(mk)
+
+    def run():
+        try:
+            _momentum_cached(mk)
+        except Exception as e:  # noqa: BLE001  background build is best-effort
+            print(f"[home] background scan for {mk} failed: {e}", flush=True)
+        finally:
+            _BUILDING.discard(mk)
+
+    threading.Thread(target=run, daemon=True).start()
+
+
+@app.get("/api/home")
+def home(market: str = "US"):
+    """Everything the home screen needs. When today's scan cache is warm: the market
+    mood + top Buy-zone names. Cold: kicks the scan in a BACKGROUND thread and returns
+    building:true — the frontend shows "Building today's list…" and polls until the
+    rows appear. The request itself never blocks on the 30-60s scan."""
+    mk = market.strip().upper()
+    if mk not in _ENABLED:
+        mk = _ENABLED[0]
+    regime = _regime_cached(mk)
+    lst = _cached(f"mom:{mk}")            # peek; the scan runs in the background
+    if not lst:
+        _kick_scan(mk)
+        return {"ok": True, "market": mk, "regime": regime, "scanned": False,
+                "building": True, "study": [], "buyzone_count": None}
+    bz = sorted([d for d in lst if "buyzone" in d.get("lanes", [])],
+                key=lambda d: 9 if d.get("dip_q") is None else d["dip_q"])
+    study = [{"ticker": d["ticker"], "name": d["name"], "market": d["market"],
+              "price_str": d["price_str"], "change": d.get("change"),
+              "ready": d.get("ready"), "why": d.get("why")} for d in bz[:3]]
+    return {"ok": True, "market": mk, "regime": regime, "scanned": True,
+            "building": False, "study": study, "buyzone_count": len(bz)}
+
+
 @app.get("/api/read")
 def read(ticker: str, market: str = ""):
     ticker = (ticker or "").strip()
@@ -387,10 +520,15 @@ def read(ticker: str, market: str = ""):
         return JSONResponse({"ok": False, "error": "Type a stock first."})
     mk = market.strip().upper()
     mk = mk if mk in _MARKETS else ""          # validate BEFORE it becomes a cache key
-    key = f"read:{ticker.upper()}:{mk}"
+    # FRESHNESS (audit H1): a single read is bucketed on ~15 minutes, not the whole day, so
+    # an intraday price never freezes for the session and a read first taken PRE-OPEN (last
+    # bar = yesterday) refreshes once the market opens. (The heavy many-name LIST scan stays
+    # daily-cached — only these one-off reads re-fetch.) The read also carries an honest
+    # "as of" stamp so the price is never shown as "now" unlabelled.
+    key = f"read:{ticker.upper()}:{mk}:{int(time.time() // 900)}"
     if mk == "IN":
-        try:  # with Kite live, an Indian read stays fresh in ~10-min buckets instead
-            if kite_live.available():          # of all-day (price/volume move intraday)
+        try:  # with Kite live, an Indian read stays fresh in ~10-min buckets
+            if kite_live.available():
                 key += f":live{int(time.time() // 600)}"
         except Exception:  # noqa: BLE001
             pass
@@ -450,8 +588,12 @@ def _verify_buyzone(lst: list, mk: str) -> None:
                 d["ready"] = "hot"                 # almost ready — amber, honest
                 return True
             return False
-        except Exception:  # noqa: BLE001  verification is best-effort — keep on error
-            return True
+        except Exception:  # noqa: BLE001  FAIL CLOSED (audit #8, 2026-07-17): on a data
+            # error DROP the row. Returning True kept it, and an unverified buyzone row is
+            # green-by-construction, so one Yahoo throttle during the day's single scan
+            # would freeze unverified "calm entry" rows until midnight. The tab is already
+            # curated — losing a few names to a transient error is the safe direction.
+            return False
 
     with cf.ThreadPoolExecutor(max_workers=8) as ex:
         results = list(ex.map(check, keep))
@@ -461,6 +603,42 @@ def _verify_buyzone(lst: list, mk: str) -> None:
         d["why"] = _LANE_WHY.get(d["lanes"][0], "momentum") if d["lanes"] else "momentum"
         d.pop("dip_q", None)
     lst[:] = [d for d in lst if d["lanes"]]        # laneless rows leave the list
+
+
+def _verify_dots(lst: list, mk: str) -> None:
+    """VERIFIED DOTS (2026-07-18): the Early/Quiet/Fast readiness dots used to be a
+    cheap heuristic that could contradict the stock's own page (the AGCO case). Every
+    non-Buy-zone row's dot now comes from the ACTUAL read engine, same as Buy-zone:
+      read buy/emerging -> green "calm" · read wait -> amber "hot" ·
+      read weak/avoid/mixed -> the row LEAVES the list (a momentum row whose own page
+      says "weak / no edge" is a contradiction, not a candidate).
+    Unlike Buy-zone (which fails CLOSED — it promises a possible entry), a transient
+    read error here keeps the row with a cautious amber dot: these tabs promise no
+    entry, so fail-soft is honest and one Yahoo hiccup can't empty the screener.
+    Cost: ~60-90s once per market per day, parallel, inside the same daily cache."""
+    import concurrent.futures as cf
+    todo = [d for d in lst if "buyzone" not in d.get("lanes", [])]
+
+    def check(d):
+        try:
+            r = _read_one(d["ticker"], mk, with_chart=False)
+            tag = (r.get("verdict") or {}).get("tag")
+            if tag in ("buy", "emerging"):
+                d["ready"] = "calm"
+                return True
+            if tag == "wait":
+                d["ready"] = "hot"
+                return True
+            return False                    # weak/avoid/mixed — drop the row
+        except Exception:  # noqa: BLE001
+            d["ready"] = "hot"              # fail-soft: cautious amber, keep the row
+            return True
+
+    with cf.ThreadPoolExecutor(max_workers=8) as ex:
+        results = list(ex.map(check, todo))
+    dead = {id(d) for d, ok in zip(todo, results) if not ok}
+    if dead:
+        lst[:] = [d for d in lst if id(d) not in dead]
 
 
 def _momentum_cached(mk: str) -> list:
@@ -483,10 +661,63 @@ def _momentum_cached(mk: str) -> list:
                 _verify_buyzone(lst, mk)
             except Exception as e:  # noqa: BLE001  never let verification kill the scan
                 print(f"[scan] buyzone verification failed for {mk}: {e}", flush=True)
+            try:
+                _verify_dots(lst, mk)
+            except Exception as e:  # noqa: BLE001
+                print(f"[scan] dot verification failed for {mk}: {e}", flush=True)
             _put(key, lst)
         else:
             print(f"[scan] momentum_list({mk}) returned empty — NOT cached", flush=True)
         return lst
+
+
+def _breadth_cached(mk: str) -> dict:
+    """Per-industry group-health breadth, one TradingView pass per market per day.
+    Never day-caches a failure (audit M11 class): one hiccup must not blank the
+    group line until midnight."""
+    key = f"breadth:{mk}"
+    hit = _cached(key)
+    if hit is not None:
+        return hit
+    b = {}
+    try:
+        from backend.market_scan import industry_breadth
+        b = industry_breadth(mk)
+    except Exception as e:  # noqa: BLE001  group line is best-effort
+        print(f"[breadth] {mk} failed: {e}", flush=True)
+    if b:
+        _put(key, b)
+    return b
+
+
+def _group_check(read: dict, snap: dict, mk: str) -> None:
+    """GROUP HEALTH check line (2026-07-18, step-1: SHOW ONLY — it never changes the
+    verdict; the green-demoting gate is a separate, later step that first has to earn
+    its power against past-article tests). A stock rarely fights its whole group: when
+    most similar stocks are breaking their trend lines, even a strong chart deserves
+    extra caution. Thin/unknown groups show nothing rather than a guess."""
+    ind = snap.get("industry")
+    if not ind or not isinstance(ind, str):
+        return
+    g = _breadth_cached(mk).get(ind)
+    if not g:
+        return
+    n, b20, hw = g["n"], g["below20"], g["hardweek"]
+    if g["health"] == "breaking":
+        state = "bad"
+        label = (f"Its group is under pressure — {b20} of {n} similar stocks are "
+                 f"below their 20-day line"
+                 + (f", {hw} fell hard this week." if hw else "."))
+    elif g["health"] == "mixed":
+        state = "watch"
+        label = (f"Its group is mixed — {b20} of {n} similar stocks are below "
+                 f"their 20-day line.")
+    else:
+        state = "good"
+        label = "Its group is healthy — most similar stocks are holding their trend lines."
+    checks = (read.get("detail") or {}).get("checks")
+    if isinstance(checks, list):
+        checks.append({"state": state, "label": label})
 
 
 def _regime_cached(mk: str) -> str | None:
@@ -503,7 +734,8 @@ def _regime_cached(mk: str) -> str | None:
         reg = bm.get("regime") or ""
     except Exception:  # noqa: BLE001  strip is best-effort
         reg = ""
-    _put(key, reg)
+    if reg:            # never day-cache a FAILURE (audit M11): one Yahoo hiccup on the
+        _put(key, reg)  # day's first strip request would blank the mood strip until midnight
     return reg or None
 
 
