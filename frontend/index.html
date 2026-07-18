@@ -187,7 +187,9 @@
 
   <!-- SCREEN 1 — search -->
   <section id="s-search">
-    <div class="row"><h1>Market Lens</h1><span class="tag">for swing traders</span><span class="tag">educational</span></div>
+    <!-- header row overrides .row's space-between: the chips CLUSTER after the title
+         (approved sample 1, 2026-07-18) instead of spreading across the full width -->
+    <div class="row" style="justify-content:flex-start;gap:8px"><h1>Market Lens</h1><span class="tag">for swing traders</span><span class="tag">educational</span></div>
     <div class="callout">A study tool for short-term (swing) trading ideas, not a tip sheet —
       it points to charts worth your attention; the decision is always yours. Educational only,
       never a buy or sell signal.</div>
