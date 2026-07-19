@@ -229,7 +229,14 @@ def get_ohlcv(symbol: str, rng: str = "2y", interval: str = "1d",
         out.attrs["meta"] = res.get("meta", {})
         return out
 
-    df = _pull()
+    # First attempt; on a hard failure (throttled shared IP — Render), one breath and
+    # the ALTERNATE host before giving up: query1/query2 are different front doors and
+    # datacenter throttles are often per-second, so a 1s pause genuinely helps.
+    try:
+        df = _pull()
+    except Exception:  # noqa: BLE001
+        time.sleep(1.0)
+        df = _pull(url.replace("query1.", "query2."))
     # TRUNCATION GUARD (2026-07-19, the LICI case): Yahoo occasionally answers 200 OK
     # with a FRACTION of the requested history (a flaky backend shard). A short daily
     # tape silently wrecks every window downstream — <15 bars kills the ATR (so every
@@ -256,12 +263,21 @@ def get_ohlcv(symbol: str, rng: str = "2y", interval: str = "1d",
         # measure VALID rows (high+low+close all present), not raw length.
         n_valid = len(df[["high", "low", "close"]].dropna())
         if exp_rows >= 20 and n_valid < exp_rows * 0.6:
-            # retry on Yahoo's ALTERNATE host — a throttled shared IP (Render) tends to
-            # keep getting stubs from the same shard; query2 is a different front door.
-            retry = _pull(url.replace("query1.", "query2."))
-            if len(retry[["high", "low", "close"]].dropna()) > n_valid:
-                df = retry
-                n_valid = len(df[["high", "low", "close"]].dropna())
+            # degraded answer: up to two more shots — the ALTERNATE host first (query2
+            # is a different front door; a throttled shard keeps serving stubs), then,
+            # after a pause, the original host again. Keep the best answer seen.
+            for wait_s, u in ((0.0, url.replace("query1.", "query2.")), (1.5, url)):
+                if wait_s:
+                    time.sleep(wait_s)
+                try:
+                    retry = _pull(u)
+                except Exception:  # noqa: BLE001
+                    continue
+                rv = len(retry[["high", "low", "close"]].dropna())
+                if rv > n_valid:
+                    df, n_valid = retry, rv
+                if n_valid >= exp_rows * 0.6:
+                    break
         if exp_rows >= 20 and n_valid < exp_rows * 0.6:
             # STILL starved after the retry: refuse to read. A stub tape produces a
             # confidently WRONG page (no ATR -> no risk floors, starved RS -> a real
