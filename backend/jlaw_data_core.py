@@ -689,6 +689,13 @@ def compute_features(symbol: str, benchmark: str = "^GSPC", as_of: Optional[str]
             "atr_1_5x_below_close": _round(c.iloc[-1] - 1.5 * (_atr(daily) or 0)),
         },
     }
+    if not light:
+        # RAW FRAMES for the caller (2026-07-19): the app's chart used to REFETCH the
+        # same daily + benchmark history it just computed features from — two extra
+        # Yahoo calls per read, and under a throttle wave the chart failed while the
+        # read succeeded (the user's chartless pages). Never serialized to a client:
+        # the read response is built from the processed values only.
+        feat["_frames"] = {"daily": daily, "index": idx}
     return feat
 
 

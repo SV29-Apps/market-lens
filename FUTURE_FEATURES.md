@@ -5,6 +5,26 @@ list whenever we defer something.
 
 ---
 
+## ✅ LICI TRUE ROOT CAUSE (final, corrects the entry below): STUB BSE LISTING (2026-07-19)
+
+The starved page SURVIVED the truncation guard → dug again with the user's fresh-browser
+report. **Actual chain: bare "LICI" resolves to LICI.BO, whose Yahoo tape is ONE ROW.**
+The app tries LICI.NS first (suffix-first, clean) — but when that attempt failed
+transiently (Render's throttled shared IP), the fallback bare-resolve rendered the .BO
+stub as a confident page: no chart, no ATR (→ the fallback 3.3:1), starved RS → "not a
+clear leader", 52-wk high ₹447.5 from a single bar. My earlier "flaky truncation"
+diagnosis was partly an artifact of comparing the app path (.NS) with the bare path
+(.BO). Fixes (commit 981b340): **resolve() prefers NSE (NSI) listings over BSE**
+(stable sort; a typed .BO still wins via exact-symbol re-rank) + **get_ohlcv absolute
+floor** — <25 daily bars = honestly unreadable (no 50-day/RS/ATR/swing) → raise, the
+endpoint shows "couldn't read", nothing cached. Verified: resolve('LICI')→LICI.NS,
+3 identical engine runs (buy/9.4/1.2), LICI.BO raises, principles 25/25, frozen as-of
+0 diffs. ⚠️ KEY FACT for tests: **Yahoo .BO tapes are frequently stubs — never use .BO
+symbols in test lists; and `/api/health` now reports the running `build`** for deploy
+verification.
+
+---
+
 ## ✅ LICI ROOT CAUSE: YAHOO TRUNCATED RESPONSES — TRUNCATION GUARD (2026-07-19)
 
 The user's LICI page persisted after the R:R fix → dug deeper. **Real disease: Yahoo

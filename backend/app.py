@@ -323,7 +323,14 @@ def _chart_payload(symbol: str, bundle: dict) -> dict:
     benchmark, rebased to 100) — the advanced overlays. 15mo of history so the 200-day
     average is complete over the ~130 bars shown."""
     import pandas as pd
-    df = J.get_ohlcv(symbol, rng="15mo")
+    # REUSE the frames the read already fetched (2026-07-19): the chart used to make
+    # two MORE Yahoo calls for the same history, so under a throttle wave the chart
+    # died while the read lived — chartless pages. Now the chart can only fail if the
+    # read itself failed. (Fallback fetch kept for safety.)
+    fr = (bundle.get("features") or {}).get("_frames") or {}
+    df = fr.get("daily")
+    if df is None or len(df) < 60:
+        df = J.get_ohlcv(symbol, rng="15mo")
     close = df["close"]
     ma20, ma50, ma200 = (close.rolling(w).mean() for w in (20, 50, 200))
 
@@ -331,7 +338,9 @@ def _chart_payload(symbol: str, bundle: dict) -> dict:
     bench = (bundle.get("resolved") or {}).get("benchmark")
     if bench:
         try:
-            bclose = J.get_ohlcv(bench, rng="15mo")["close"].reindex(df.index).ffill()
+            bdf = fr.get("index")
+            bclose = (bdf["close"] if bdf is not None
+                      else J.get_ohlcv(bench, rng="15mo")["close"]).reindex(df.index).ffill()
             rs = close / bclose
         except Exception:  # noqa: BLE001
             rs = None
