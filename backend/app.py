@@ -277,10 +277,13 @@ def _read_one(ticker: str, market: str | None, with_chart: bool = True) -> dict:
                     pass
         except Exception:  # noqa: BLE001
             pass
-        try:  # 1-2 lines about the business — best-effort
-            ab = _about_for(read.get("name") or "")
-            if ab:
-                read["about"] = ab
+        try:  # 1-2 lines about the business — best-effort. NOT for Indian stocks
+            # (user call, 2026-07-19): Wikipedia lookups on short Indian names are
+            # unreliable — "Bhel" returned the street-food disambiguation page.
+            if (market or "").strip().upper() != "IN":
+                ab = _about_for(read.get("name") or "")
+                if ab:
+                    read["about"] = ab
         except Exception:  # noqa: BLE001
             pass
     return read
