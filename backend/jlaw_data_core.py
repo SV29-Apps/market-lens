@@ -120,6 +120,11 @@ def resolve(name_or_ticker: str, market: Optional[str] = None) -> dict:
         if hinted:
             cands = hinted
 
+    # INDIA: prefer the NSE listing over BSE when the same name trades on both — on
+    # Yahoo, .BO tapes are often stubs (LICI.BO: ONE row of history, 2026-07-19) that
+    # produce a confidently wrong starved read. Stable sort, so ranking is otherwise kept.
+    cands.sort(key=lambda c: 0 if c["exchange"] == "NSI" else 1)
+
     # Exact ticker typed → that candidate WINS, wherever Yahoo ranked it. Without this
     # re-rank, "AEHR" resolved to AEHG (a 2X leveraged ETF with "AEHR" in its name).
     typed = name_or_ticker.strip().upper()
@@ -209,8 +214,8 @@ def get_ohlcv(symbol: str, rng: str = "2y", interval: str = "1d",
                f"?period1={p1}&period2={p2}&interval={interval}")
     else:
         url = f"{CHART_BASE}{urllib.parse.quote(symbol)}?range={rng}&interval={interval}"
-    def _pull() -> pd.DataFrame:
-        d = _http_json(url)
+    def _pull(u: str = "") -> pd.DataFrame:
+        d = _http_json(u or url)
         res = d["chart"]["result"]
         if not res:
             raise RuntimeError(f"no data for {symbol}")
@@ -234,15 +239,37 @@ def get_ohlcv(symbol: str, rng: str = "2y", interval: str = "1d",
     # (respecting the listing's own age via meta.firstTradeDate) and refetch once when
     # the answer is implausibly short; keep the longer of the two.
     if interval == "1d":
+        # ABSOLUTE FLOOR: under ~25 daily bars NOTHING downstream is readable (no 50-day
+        # line, no relative strength, no swing, no ATR) — yet such a tape used to render
+        # a confident "mixed" page (LICI.BO: ONE row). A genuinely week-old listing is
+        # honestly unreadable too; the caller shows "couldn't read" instead of a guess.
+        if len(df) < 25:
+            raise RuntimeError(f"too little history for {symbol}: {len(df)} rows")
         cal_days = _RANGE_DAYS.get(rng, 740)
         end_ts = p2 if as_of else int(time.time())
         ftd = (df.attrs.get("meta") or {}).get("firstTradeDate")
         eff_start = max(end_ts - cal_days * 86400, ftd or 0)
         exp_rows = max(0.0, (end_ts - eff_start) / 86400) * (5 / 7) * 0.9
-        if exp_rows >= 20 and len(df) < exp_rows * 0.6:
-            retry = _pull()
-            if len(retry) > len(df):
+        # Degradation comes in TWO shapes (both seen live 2026-07-19): a short stub, and
+        # a full-length tape whose older high/low values are null (closes intact — the
+        # 52-wk high then drifts and the ATR dies while everything LOOKS complete). So
+        # measure VALID rows (high+low+close all present), not raw length.
+        n_valid = len(df[["high", "low", "close"]].dropna())
+        if exp_rows >= 20 and n_valid < exp_rows * 0.6:
+            # retry on Yahoo's ALTERNATE host — a throttled shared IP (Render) tends to
+            # keep getting stubs from the same shard; query2 is a different front door.
+            retry = _pull(url.replace("query1.", "query2."))
+            if len(retry[["high", "low", "close"]].dropna()) > n_valid:
                 df = retry
+                n_valid = len(df[["high", "low", "close"]].dropna())
+        if exp_rows >= 20 and n_valid < exp_rows * 0.6:
+            # STILL starved after the retry: refuse to read. A stub tape produces a
+            # confidently WRONG page (no ATR -> no risk floors, starved RS -> a real
+            # leader reads "not a clear leader", broken chart, drifting 52-wk high).
+            # No read is better than a false read; the caller shows "try again" and
+            # nothing gets cached.
+            raise RuntimeError(f"degraded history for {symbol}: "
+                               f"{n_valid} valid rows where ~{int(exp_rows)} expected")
     if _MEMO is not None:
         _MEMO[(symbol, rng, interval, as_of)] = df
     return df
