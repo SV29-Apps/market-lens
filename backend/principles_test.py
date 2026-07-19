@@ -152,6 +152,12 @@ def grid():
               dict(price=100.0, ma10=95.0, ma20=94.0, ma50=92.0, ma200=85.0,
                    swing_low=99.7, swing_high=110.0, high_52w=115.0,
                    rs="falling", ex1=-1, ex3=-1, ex6=1, atr=2.0, pct1d=0.2)))
+    # P12b: same trap with NO ATR AT ALL (dirty data, the real LICI) — the 1%-of-entry
+    # fallback must grade it (110-100)/1 = 10, never 33.
+    S.append(("mixed name, hugging swing low, ATR unavailable (P12 fallback floor)",
+              dict(price=100.0, ma10=95.0, ma20=94.0, ma50=92.0, ma200=85.0,
+                   swing_low=99.7, swing_high=110.0, high_52w=115.0,
+                   rs="falling", ex1=-1, ex3=-1, ex6=1, atr=None, pct1d=0.2)))
     return S
 
 
@@ -207,13 +213,15 @@ for label, kw in grid():
     if db is not None and 1 <= db <= 3 and tag in ("weak", "avoid") and (kw.get("ex1") or 0) >= 0:
         fail("P11", f"a {db}-day slip below the 50-day on a strong name tagged '{tag}' — too harsh")
     # P12 — R:R never graded off a sub-ATR risk when there's no buy setup (the exit
-    # is a watch-line that can hug the price; the displayed ratio must use >= ~1 ATR)
-    if rr.get("ratio") is not None and buy is None and kw.get("atr") and price:
+    # is a watch-line that can hug the price; the displayed ratio must use >= ~1 ATR,
+    # or >= ~1% of the entry when ATR is unavailable — the dirty-data LICI case)
+    if rr.get("ratio") is not None and buy is None and price:
+        floor_ref = kw.get("atr") or 0.01 * price
         tgt = kw.get("swing_high")
-        if tgt and tgt > price:
-            cap = (tgt - price) / (0.9 * kw["atr"])
+        if tgt and tgt > price and floor_ref:
+            cap = (tgt - price) / (0.9 * floor_ref)
             if rr["ratio"] > cap:
-                fail("P12", f"R:R {rr['ratio']} implies risk < ~1x ATR (cap ~{round(cap,1)})")
+                fail("P12", f"R:R {rr['ratio']} implies risk below the floor (cap ~{round(cap,1)})")
     # P5 — exit below price
     if stop is not None and price is not None and stop >= price:
         fail("P5", f"exit {stop} >= price {price}")

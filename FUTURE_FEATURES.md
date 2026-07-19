@@ -5,6 +5,26 @@ list whenever we defer something.
 
 ---
 
+## ✅ LICI ROOT CAUSE: YAHOO TRUNCATED RESPONSES — TRUNCATION GUARD (2026-07-19)
+
+The user's LICI page persisted after the R:R fix → dug deeper. **Real disease: Yahoo
+occasionally answers 200 OK with a FRACTION of the requested history** (flaky shard;
+the same request minutes apart returned 499 rows then a stub). A short daily tape
+silently wrecks everything downstream: <15 bars → ATR None (risk floor + extended +
+tight stops all OFF → the 16.7:1), <30 rows → RS "unavailable" → a real leader reads
+"not a clear leader" BY STARVATION, wrong swing lows, failed chart — the user's whole
+page was ONE truncated response, cached. Fixes in `get_ohlcv` + `_atr` + `_detail`:
+- **Truncation guard:** expected-row estimate from the requested range honoring
+  `meta.firstTradeDate` (young listings stay valid — FIG 242 rows passes); an
+  implausibly short daily answer (<60% expected) is refetched once, keep the longer.
+- **`_atr` NaN-safe** (computes on valid high/low/close rows only) + **R:R floor
+  fallback** when ATR is still unavailable: risk graded at ≥ ~1% of entry (P12b
+  scenario: 33:1 → 10). Principles now 25 scenarios.
+Verified: principles 25/25 · frozen as-of 0 diffs · LICI live buy/1.2:1/130-pt chart ·
+FIG/as-of paths unaffected.
+
+---
+
 ## ✅ LICI PAIR: R:R RISK FLOOR + NO-CACHE-ON-CHARTLESS — 2026-07-18 (user-caught)
 
 User's LICI page had (a) NO chart and (b) "Exit ₹432" ₹1 under the ₹433 price with

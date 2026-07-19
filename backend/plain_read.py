@@ -830,8 +830,11 @@ def _detail(currency, tag, over_extended, extended, vol_ratio, rs_rising, ex_1m,
             # Grade the reward against a risk of AT LEAST ~1 daily swing (same P8
             # principle the buy setups enforce), whatever line the ladder displays.
             risk = entry - stop
-            if atr and risk < atr:
-                risk = atr
+            # fallback when ATR itself is unavailable (dirty data): ~1% of the entry is
+            # a conservative daily-swing stand-in — the 16.7:1 fiction can never print.
+            floor = atr if atr else entry * 0.01
+            if risk < floor:
+                risk = floor
             # threshold on the ROUNDED ratio the user actually sees: a raw 0.96 shows
             # as "1.0", and "1.0 — poor, you'd risk more than you could gain" reads
             # as a contradiction (audit finding, 2026-07-11).

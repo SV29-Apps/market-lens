@@ -209,18 +209,40 @@ def get_ohlcv(symbol: str, rng: str = "2y", interval: str = "1d",
                f"?period1={p1}&period2={p2}&interval={interval}")
     else:
         url = f"{CHART_BASE}{urllib.parse.quote(symbol)}?range={rng}&interval={interval}"
-    d = _http_json(url)
-    res = d["chart"]["result"]
-    if not res:
-        raise RuntimeError(f"no data for {symbol}")
-    res = res[0]
-    ts = res.get("timestamp") or []
-    q = res["indicators"]["quote"][0]
-    df = pd.DataFrame(
-        {"open": q["open"], "high": q["high"], "low": q["low"], "close": q["close"], "volume": q["volume"]},
-        index=pd.to_datetime(ts, unit="s"),
-    ).dropna(subset=["close"])
-    df.attrs["meta"] = res.get("meta", {})
+    def _pull() -> pd.DataFrame:
+        d = _http_json(url)
+        res = d["chart"]["result"]
+        if not res:
+            raise RuntimeError(f"no data for {symbol}")
+        res = res[0]
+        ts = res.get("timestamp") or []
+        q = res["indicators"]["quote"][0]
+        out = pd.DataFrame(
+            {"open": q["open"], "high": q["high"], "low": q["low"], "close": q["close"], "volume": q["volume"]},
+            index=pd.to_datetime(ts, unit="s"),
+        ).dropna(subset=["close"])
+        out.attrs["meta"] = res.get("meta", {})
+        return out
+
+    df = _pull()
+    # TRUNCATION GUARD (2026-07-19, the LICI case): Yahoo occasionally answers 200 OK
+    # with a FRACTION of the requested history (a flaky backend shard). A short daily
+    # tape silently wrecks every window downstream — <15 bars kills the ATR (so every
+    # risk floor and "extended" measure switches off) and <30 kills relative strength,
+    # so a real leader reads "not a clear leader" by starvation, with the whole page
+    # then cached. Estimate how many trading rows the request SHOULD have produced
+    # (respecting the listing's own age via meta.firstTradeDate) and refetch once when
+    # the answer is implausibly short; keep the longer of the two.
+    if interval == "1d":
+        cal_days = _RANGE_DAYS.get(rng, 740)
+        end_ts = p2 if as_of else int(time.time())
+        ftd = (df.attrs.get("meta") or {}).get("firstTradeDate")
+        eff_start = max(end_ts - cal_days * 86400, ftd or 0)
+        exp_rows = max(0.0, (end_ts - eff_start) / 86400) * (5 / 7) * 0.9
+        if exp_rows >= 20 and len(df) < exp_rows * 0.6:
+            retry = _pull()
+            if len(retry) > len(df):
+                df = retry
     if _MEMO is not None:
         _MEMO[(symbol, rng, interval, as_of)] = df
     return df
@@ -262,9 +284,15 @@ def _stack(df: pd.DataFrame, windows) -> str:
 
 
 def _atr(df: pd.DataFrame, n=14) -> Optional[float]:
-    if len(df) < n + 1:
+    # NaN-SAFE (2026-07-19, the LICI case): get_ohlcv drops rows with a null CLOSE, but
+    # Yahoo's India feed also ships scattered rows with null HIGH/LOW and a valid close.
+    # One such row inside the window made the rolling mean NaN -> ATR None -> every
+    # downstream ATR guard (risk floor, extended-in-ATRs, tight stop) silently off.
+    # Compute the true range on valid rows only.
+    v = df[["high", "low", "close"]].dropna()
+    if len(v) < n + 1:
         return None
-    h, l, c = df["high"], df["low"], df["close"]
+    h, l, c = v["high"], v["low"], v["close"]
     pc = c.shift(1)
     tr = pd.concat([(h - l), (h - pc).abs(), (l - pc).abs()], axis=1).max(axis=1)
     return _round(tr.rolling(n).mean().iloc[-1])
