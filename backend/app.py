@@ -117,7 +117,18 @@ def _screen_resolved(ticker: str, market: str | None, light: bool = False) -> di
         b = J.screen(tk + suffix, outdir=None, make_charts=False, market=mk, light=light)
         if b.get("features"):                       # direct symbol resolved -> trust it
             return b
-    return J.screen(tk, outdir=None, make_charts=False, market=market or None, light=light)
+    try:
+        return J.screen(tk, outdir=None, make_charts=False, market=market or None, light=light)
+    except Exception:
+        # An explicitly requested BSE symbol whose Yahoo tape is a stub (LICI.BO = ONE
+        # row, 2026-07-19): the same company lists on NSE — read that instead of
+        # dead-ending, since the user means the company, not the exchange.
+        if tk.upper().endswith(".BO"):
+            b = J.screen(tk[:-3] + ".NS", outdir=None, make_charts=False,
+                         market=mk or "IN", light=light)
+            if b.get("features"):
+                return b
+        raise
 
 
 def _news_for(symbol: str) -> dict:
@@ -473,6 +484,12 @@ def suggest(q: str = "", market: str = "US"):
             items = extra + [it for it in items if it["symbol"] not in seen]
     except Exception:  # noqa: BLE001  suggestions are best-effort — empty, not error
         return {"ok": True, "items": []}
+    # BSE twins hide behind their NSE listing (2026-07-19, user-hit): Yahoo's .BO tapes
+    # are often stubs (LICI.BO = ONE row), so picking the BSE row from this dropdown
+    # dead-ended in "couldn't read". Keep a .BO row only when no NSE twin exists.
+    ns_bases = {it["symbol"][:-3] for it in items if it["symbol"].endswith(".NS")}
+    items = [it for it in items if not (it["symbol"].endswith(".BO")
+                                        and it["symbol"][:-3] in ns_bases)]
     items.sort(key=lambda it: 0 if it["market"] == mk else 1)   # stable: Yahoo rank kept
     out = {"ok": True, "items": items[:6]}
     _put(key, out)
