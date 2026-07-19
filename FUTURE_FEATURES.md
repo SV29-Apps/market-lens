@@ -5,6 +5,18 @@ list whenever we defer something.
 
 ---
 
+## ✅ NO ABOUT-LINE ON INDIAN STOCKS — 2026-07-19 (user call, commit 30923ab)
+
+Wikipedia lookups on short Indian names are unreliable ("Bhel" → the street-food
+disambiguation page as the company description). Per the user: the about-line is OFF
+for IN reads entirely (deliberate, not a regression); US/UK keep it. Also from the
+same BHEL review — OPEN USER DECISION reaffirmed: heavy-selling-down-day is still NOT
+wired into the verdict (the PENG case; BHEL = green "buyable" beside 🔴 "Heavy selling
+right now", 🟡 big red bar, 🔴 group under pressure, R:R 0.5 "poor" — offered to wire
+it sample-first; no answer yet). Group green-gate stays step-2 (grade vs articles first).
+
+---
+
 ## ✅ LICI TRUE ROOT CAUSE (final, corrects the entry below): STUB BSE LISTING (2026-07-19)
 
 The starved page SURVIVED the truncation guard → dug again with the user's fresh-browser

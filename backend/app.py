@@ -180,13 +180,19 @@ def _about_for(name: str) -> str | None:
         s = get("https://en.wikipedia.org/w/rest.php/v1/search/title?q="
                 + urllib.parse.quote(nm) + "&limit=1")
         pages = s.get("pages") or []
-        first = next((w for w in nm.split() if len(w) > 2 and w.lower() != "the"),
-                     nm.split()[0])
+        words = [w.strip(".,()") for w in nm.split()]   # "NetApp, Inc." -> "NetApp"
+        first = next((w for w in words if len(w) > 2 and w.lower() != "the"), words[0])
         if pages and first.lower() in (pages[0].get("title") or "").lower():
             j = get("https://en.wikipedia.org/api/rest_v1/page/summary/"
                     + urllib.parse.quote(pages[0]["key"]))
             ext = (j.get("extract") or "").replace("\n", " ").strip()
             low = ext.lower()
+            # DISAMBIGUATION GUARD (2026-07-19, the "Bhel = street food" page): a
+            # list-of-meanings page can mention the company and sneak past the biz
+            # filter. Wikipedia marks these type=disambiguation; belt-and-braces on
+            # the tell-tale phrase too.
+            if j.get("type") == "disambiguation" or "may refer to" in low:
+                ext = ""
             biz = any(w in low for w in ("compan", "corporation", "manufactur", "subsidiary",
                                          "bank", "conglomerate", "retailer", "producer",
                                          "group", "firm", "brand", "insurer", "operator"))
