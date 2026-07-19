@@ -135,6 +135,10 @@ def build_plain_read(bundle: dict, news: dict | None = None) -> dict:
     days_b50 = mem.get("days_below_50")
     worst3 = mem.get("worst_drop_3d")
     recent_shock = (worst3 is not None and worst3 < -4) or just_dumped
+    # HEAVY-SELLING GATE input (2026-07-19, BHEL/PENG): the same single reading that
+    # paints the volume check red also gates the verdict — see _selling_pressure.
+    last_candle = _g(f, "daily", "last_candle", default={}) or {}
+    selling_today = _selling_pressure(vol_ratio, pct_1d, last_candle)
     weak_now = (not above20 and not above50) and ((ex_1m or 0) < 0 or rs_falling)
     # STRUCTURAL WEAK (added 2026-07-15, TEAM/CRM from the 15-Jul Midweek Pulse):
     # JLaw calls a name "weak structure" when it sits below its LONG-TERM trend
@@ -224,12 +228,16 @@ def build_plain_read(bundle: dict, news: dict | None = None) -> dict:
         phase = "below_trend"
     elif extended or near_high or just_popped:
         phase = "stretched"
-    elif recent_shock:
+    elif recent_shock or selling_today == "distribution":
         # SHOCK GATE (2026-07-18, the NTAP case): a >4% down day within the LAST 3
         # sessions means this is not a calm resting spot yet, even if today's bar is
         # quiet — the old 1-day lookback read NTAP green the day after its -7.1% shock.
         # Checked AFTER stretched so a pop/near-high keeps the more specific "don't
         # chase" message (CHENNPETRO: +7% today after a -4% day must stay "don't chase").
+        # + HEAVY-SELLING GATE (2026-07-19, BHEL/PENG): a full-bodied red close on
+        # heavy volume is distribution — never a calm entry, whatever the price
+        # structure says ("relatively contained selling volume" is part of JLaw's own
+        # definition of a healthy pullback). Shakeout-shaped bars do NOT gate.
         phase = "sliding"
     else:
         phase = "resting"          # calm AND above its 50-day = the low-risk spot to buy
@@ -252,7 +260,9 @@ def build_plain_read(bundle: dict, news: dict | None = None) -> dict:
            # sliding entered ONLY because of an earlier-day shock (calm-ish today, trend
            # intact) -> the wording must say "just had a sharp drop", not "still falling".
            "shock_earlier": bool(recent_shock and not just_dumped
-                                 and (above20 or not rs_falling))}
+                                 and (above20 or not rs_falling)),
+           # sliding entered on TODAY's heavy-selling day -> "sellers were busy today"
+           "heavy_selling_today": selling_today == "distribution"}
     cell = _CELLS[(tier, phase)](ctx)
     tag, color = cell["tag"], cell["color"]
     headline, subline = cell["headline"], cell["subline"]
@@ -342,7 +352,7 @@ def build_plain_read(bundle: dict, news: dict | None = None) -> dict:
         "action": action,
         "detail": _detail(currency, tag, over_extended, extended, vol_ratio, rs_rising,
                           ex_1m, ex_6m, pct_1d, price, eff_target, target_kind,
-                          buy_level, eff_stop, atr=atr14,
+                          buy_level, eff_stop, atr=atr14, candle=last_candle,
                           live_vol=bool(_g(f, "daily", "volume", "live_adjusted")
                                         or _g(f, "daily", "volume", "session_adjusted"))),
         "supports": supports,
@@ -439,7 +449,9 @@ def _cell_leader_sliding(c):
     # TODAY. Not a calm "resting" pullback yet, so not a buy-NOW. JLaw: buy the dip
     # when it STEADIES / reclaims, don't catch it mid-fall. (Milder cousin of deep_fade.)
     stop = _floored_stop(c["price"], c["swing_low"], c["atr14"], min_atrs=0.0)
-    subline = ("A leader, but it just had a sharp drop. Let it settle and turn back up first."
+    subline = ("A leader, but sellers were busy today. Let it settle and turn back up first."
+               if c.get("heavy_selling_today") else
+               "A leader, but it just had a sharp drop. Let it settle and turn back up first."
                if c.get("shock_earlier") else
                "A leader, but it's still falling right now. Let it settle and turn back up first.")
     return _cell("wait", "amber", "Pulling back — wait for it to steady",
@@ -739,9 +751,30 @@ def _patterns(last_candle, recent_gaps, above50, strong_rs, regime, pct_1d, tag,
             for _, lab, txt in out[:2]] or None
 
 
+def _selling_pressure(vol_ratio, pct_1d, candle):
+    """ONE SOURCE for "how bad was today's selling" — feeds BOTH the volume check and
+    the verdict gate (2026-07-19, the BHEL/PENG case: a red "Heavy selling" check could
+    sit under a green "Looks buyable"; deriving both from this single reading makes
+    that contradiction structurally impossible). Returns:
+      "distribution" — heavy volume + a meaningful, full-bodied red close. Sellers in
+                       charge; never a calm entry ("buy when it STEADIES").
+      "shakeout"     — heavy volume + red day BUT a long lower tail with the close well
+                       off the lows — buyers stepped back in; constructive context, not
+                       a veto (an amber note may sit beside a green verdict; red cannot).
+      None           — anything else.
+    Heavy = the check's own >=1.3x bar. Meaningful red = <= -1.5%: a heavy but
+    barely-red day is churn, not distribution."""
+    if vol_ratio is None or vol_ratio < 1.3 or (pct_1d or 0) > -1.5:
+        return None
+    c = candle or {}
+    if (c.get("lower_wick_pct") or 0) >= 40 and (c.get("body_pct_of_range") or 0) <= 45:
+        return "shakeout"
+    return "distribution"
+
+
 def _detail(currency, tag, over_extended, extended, vol_ratio, rs_rising, ex_1m, ex_6m,
             pct_1d, price, target_val, target_kind, buy_level, stop, atr=None,
-            live_vol=False):
+            candle=None, live_vol=False):
     """The read's inline detail: a target plus three plain 'setup' checks. Each check
     is THREE-STATE — good / watch / bad — not a pass/fail tick, because some factors
     (notably volume) are context-dependent, not simply good or bad.
@@ -768,16 +801,23 @@ def _detail(currency, tag, over_extended, extended, vol_ratio, rs_rising, ex_1m,
     else:
         c1 = {"state": "good", "label": "Not over-extended"}
 
+    selling = _selling_pressure(vol_ratio, pct_1d, candle)
     if vol_ratio is None:
         # no honest volume reading yet (session barely open — audit H3). Don't imply "calm".
         c2 = {"state": "watch", "label": "Volume — no clear read yet today"}
-    elif heavy and down:
+    elif selling == "distribution":
+        # RED — and the verdict is gated on the SAME reading, so this can never sit
+        # under a green "Looks buyable" (the BHEL/PENG constitution rule, 2026-07-19).
         c2 = {"state": "bad", "label": f"Heavy selling{tod or ' right now'}"}
+    elif selling == "shakeout":
+        c2 = {"state": "watch",
+              "label": "Heavy-volume flush — but buyers stepped back in by the close"}
     elif heavy and up:
         c2 = {"state": "good", "label": f"Strong buying — heavy volume{tod}, price up"}
     elif heavy:
-        # heavy volume on a FLAT close is churn with no direction — not "selling" (audit M3).
-        c2 = {"state": "watch", "label": "Heavy volume, but the price went nowhere"}
+        # heavy volume on a flat-to-slightly-red close is churn, not "selling" (audit M3;
+        # widened 2026-07-19: a heavy day down less than ~1.5% is noise, not distribution).
+        c2 = {"state": "watch", "label": "Heavy volume, but only a small move"}
     elif quiet and d1 < -4:
         # a >4% down day is not "calm" whatever the volume ratio says.
         c2 = {"state": "watch", "label": "Sharp down day — let it settle"}

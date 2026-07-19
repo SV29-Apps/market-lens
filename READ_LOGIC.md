@@ -5,6 +5,27 @@ Keep this in sync with `backend/plain_read.py` — if you change the code, updat
 
 ---
 
+## 2026-07-19 HEAVY-SELLING GATE (the BHEL/PENG case — closes the last red-under-green)
+
+**One shared reading drives BOTH the volume check and the verdict** (`_selling_pressure`),
+so a red "Heavy selling" check can never sit under a green "Looks buyable" again:
+- **"distribution"** = volume ≥1.3× average AND close ≤ −1.5% AND a full-bodied red bar
+  → the volume check shows red "Heavy selling" AND a would-be green demotes to the
+  sliding wait ("A leader, but sellers were busy today. Let it settle…"). *JLaw:
+  "relatively contained selling volume" is part of his own healthy-pullback definition;
+  he buys when it STEADIES, never into active selling.*
+- **"shakeout"** = same heavy red day BUT a long lower tail (≥40%) with a small body
+  (≤45%) — buyers stepped back in by the close. *JLaw reads this constructively* →
+  amber context line ("Heavy-volume flush — but buyers stepped back in by the close"),
+  green stays eligible. Amber beside green = honest context (the user's constitution);
+  red beside green = impossible by construction.
+- A heavy day down less than ~1.5% is churn, not distribution → amber "Heavy volume,
+  but only a small move" (widens audit M3's flat-day case).
+**Principle P13** (27 scenarios): never green on a distribution day + a direct
+constitution assertion — no scenario may show a red "selling" check under a green tag.
+
+---
+
 ## 2026-07-18 R:R RISK FLOOR + no-cache-on-chartless (the LICI pair)
 
 - **R:R risk floor (`_detail`, new `atr` param):** the displayed reward:risk is never

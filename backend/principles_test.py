@@ -18,6 +18,9 @@ Rules asserted (each maps to an audit finding or a JLaw principle):
       does NOT read weak                                    (reclaim window, 2026-07-18)
   P12 R:R is never graded off a risk smaller than ~1x ATR, even on watch-line
       exits with no buy setup                          (LICI 16.7:1 case, 2026-07-18)
+  P13 never GREEN on a heavy-selling (distribution) day, and a red volume check
+      can never sit under a green verdict — one shared reading drives both
+      (shakeout bars exempt)                          (BHEL/PENG case, 2026-07-19)
 """
 import io, sys
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
@@ -29,7 +32,8 @@ from backend.plain_read import build_plain_read
 def bundle(*, price, ma10, ma20, ma50, ma200, swing_low, swing_high, high_52w,
            rs="rising", ex1=5.0, ex3=20.0, ex6=40.0, pct1d=0.5, atr=2.0,
            currency="USD", vol=0.9, regime="Neutral",
-           days_below_50=None, worst3=None):
+           days_below_50=None, worst3=None,
+           candle_color="green", candle_body=40, candle_upper=30, candle_lower=30):
     pv = lambda m: round((price / m - 1) * 100, 2) if m else None
     return {
         "resolved": {"name": "Test Co", "symbol": "TEST"},
@@ -49,8 +53,9 @@ def bundle(*, price, ma10, ma20, ma50, ma200, swing_low, swing_high, high_52w,
                 "volume": {"ratio_vs_avg50": vol}, "recent_gaps": [],
                 "trend_memory": {"days_below_50": days_below_50,
                                  "worst_drop_3d": worst3},
-                "last_candle": {"color": "green", "body_pct_of_range": 40,
-                                "upper_wick_pct": 30, "lower_wick_pct": 30}},
+                "last_candle": {"color": candle_color, "body_pct_of_range": candle_body,
+                                "upper_wick_pct": candle_upper,
+                                "lower_wick_pct": candle_lower}},
             "relative_strength": {
                 "rs_line_slope": rs,
                 "stock_vs_index_1m": {"excess_pct": ex1, "stock_pct": ex1},
@@ -158,6 +163,22 @@ def grid():
               dict(price=100.0, ma10=95.0, ma20=94.0, ma50=92.0, ma200=85.0,
                    swing_low=99.7, swing_high=110.0, high_52w=115.0,
                    rs="falling", ex1=-1, ex3=-1, ex6=1, atr=None, pct1d=0.2)))
+    # P13: the BHEL/PENG case — a textbook resting leader, but TODAY is a heavy-selling
+    # day (2x volume, -3%, full-bodied red bar). Distribution is never a calm entry.
+    S.append(("resting leader on a heavy full-red day (P13 distribution gate)",
+              dict(price=100.0, ma10=101, ma20=100.5, ma50=94, ma200=80.0,
+                   swing_low=97.0, swing_high=112.0, high_52w=120.0,
+                   rs="rising", ex1=5, ex3=20, ex6=40, atr=2.0, pct1d=-3.0,
+                   vol=2.0, candle_color="red", candle_body=70, candle_lower=10,
+                   candle_upper=20)))
+    # P13 counter-case: same heavy red day but a SHAKEOUT bar (long lower tail, close
+    # off the lows) — constructive per JLaw; must stay green-eligible (amber context).
+    S.append(("resting leader, heavy shakeout bar (P13 shakeout stays buyable)",
+              dict(price=100.0, ma10=101, ma20=100.5, ma50=94, ma200=80.0,
+                   swing_low=97.0, swing_high=112.0, high_52w=120.0,
+                   rs="rising", ex1=5, ex3=20, ex6=40, atr=2.0, pct1d=-2.0,
+                   vol=2.0, candle_color="red", candle_body=25, candle_lower=55,
+                   candle_upper=20)))
     return S
 
 
@@ -222,6 +243,18 @@ for label, kw in grid():
             cap = (tgt - price) / (0.9 * floor_ref)
             if rr["ratio"] > cap:
                 fail("P12", f"R:R {rr['ratio']} implies risk below the floor (cap ~{round(cap,1)})")
+    # P13 — never a green buy on a heavy-selling (distribution) day; the shakeout
+    # shape (long lower tail, small body) is exempt. And THE CONSTITUTION CHECK: a
+    # red volume check must never sit under a green verdict, in ANY scenario.
+    v1, cb = kw.get("vol", 0.9), kw.get("candle_body", 40)
+    cl, d1 = kw.get("candle_lower", 30), kw.get("pct1d", 0.5)
+    shakeout_bar = cl >= 40 and cb <= 45
+    if v1 >= 1.3 and d1 <= -1.5 and not shakeout_bar and tag == "buy":
+        fail("P13", f"green buy on a heavy-selling day ({d1}% on {v1}x volume)")
+    if tag == "buy":
+        for c in (dt.get("checks") or []):
+            if c.get("state") == "bad" and "selling" in (c.get("label") or "").lower():
+                fail("P13", f"red '{c.get('label')}' check under a green verdict")
     # P5 — exit below price
     if stop is not None and price is not None and stop >= price:
         fail("P5", f"exit {stop} >= price {price}")

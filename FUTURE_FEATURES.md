@@ -5,6 +5,22 @@ list whenever we defer something.
 
 ---
 
+## ✅ HEAVY-SELLING GATE BUILT — 2026-07-19 (user's "Build this"; the PENG decision CLOSED)
+
+The 13-Jul open decision (a) is resolved: heavy selling now FEEDS THE VERDICT. Spec in
+READ_LOGIC.md top section (`_selling_pressure` = the one shared reading; distribution
+gates green→wait "sellers were busy today"; shakeout bars = amber context, still
+green-eligible; heavy-but-small-red = churn amber). **VERIFIED:** principles 27/27 incl.
+new P13 + a direct constitution assertion (no red "selling" check under a green tag in
+ANY scenario) · frozen as-of article set 0 verdict diffs · 21-name regression = exactly
+1 flip, verified intended (CHENNPETRO: its +7% Friday morning pop fully reversed into a
+−3.2% close on 1.5× volume, 75%-body red bar — textbook distribution) · 56-name sweep 0
+violations · BHEL DOM-verified (amber "sellers were busy today", red check under a
+matching amber verdict, coherent ladder) · console clean. The BHEL/PENG red-under-green
+contradiction is now structurally impossible.
+
+---
+
 ## ✅ NO ABOUT-LINE ON INDIAN STOCKS — 2026-07-19 (user call, commit 30923ab)
 
 Wikipedia lookups on short Indian names are unreliable ("Bhel" → the street-food
