@@ -390,7 +390,12 @@ def _chart_payload(symbol: str, bundle: dict) -> dict:
 async def health():
     # async def on purpose: it never touches the threadpool, so the platform health
     # check still answers even if slow upstream reads have every worker thread busy.
-    return {"ok": True, "service": "market-lens"}
+    # `build` = the running commit (Render injects RENDER_GIT_COMMIT) — health is the
+    # only unauthenticated surface, so this is how a deploy is verified from outside
+    # (2026-07-19: three pushes were live-verified only by health 200, which can't
+    # tell builds apart — a stalled deploy was invisible).
+    return {"ok": True, "service": "market-lens",
+            "build": (os.environ.get("RENDER_GIT_COMMIT") or "local")[:8]}
 
 
 @app.get("/api/config")
