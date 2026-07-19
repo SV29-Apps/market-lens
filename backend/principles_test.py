@@ -16,6 +16,8 @@ Rules asserted (each maps to an audit finding or a JLaw principle):
   P10 never GREEN ("buy") within 3 sessions of a >4% down day     (NTAP, 17-Jul article)
   P11 >6 days below the 50-day unreclaimed reads weak/avoid; a 1-3 day slip
       does NOT read weak                                    (reclaim window, 2026-07-18)
+  P12 R:R is never graded off a risk smaller than ~1x ATR, even on watch-line
+      exits with no buy setup                          (LICI 16.7:1 case, 2026-07-18)
 """
 import io, sys
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
@@ -144,6 +146,12 @@ def grid():
                    swing_low=95.0, swing_high=118.0, high_52w=122.0,
                    rs="rising", ex1=2, ex3=18, ex6=35, atr=2.0, pct1d=0.3,
                    days_below_50=2, worst3=-1.8)))
+    # P12: the LICI case — a mixed name whose swing low HUGS the price. The naive
+    # ratio is (110-100)/0.3 = 33:1 "good"; the ATR floor grades it (110-100)/2 = 5.
+    S.append(("mixed name, swing low 0.3 below price (P12 R:R risk floor)",
+              dict(price=100.0, ma10=95.0, ma20=94.0, ma50=92.0, ma200=85.0,
+                   swing_low=99.7, swing_high=110.0, high_52w=115.0,
+                   rs="falling", ex1=-1, ex3=-1, ex6=1, atr=2.0, pct1d=0.2)))
     return S
 
 
@@ -198,6 +206,14 @@ for label, kw in grid():
         fail("P11", f"{db} days below the 50-day unreclaimed but tag is '{tag}' (want weak/avoid)")
     if db is not None and 1 <= db <= 3 and tag in ("weak", "avoid") and (kw.get("ex1") or 0) >= 0:
         fail("P11", f"a {db}-day slip below the 50-day on a strong name tagged '{tag}' — too harsh")
+    # P12 — R:R never graded off a sub-ATR risk when there's no buy setup (the exit
+    # is a watch-line that can hug the price; the displayed ratio must use >= ~1 ATR)
+    if rr.get("ratio") is not None and buy is None and kw.get("atr") and price:
+        tgt = kw.get("swing_high")
+        if tgt and tgt > price:
+            cap = (tgt - price) / (0.9 * kw["atr"])
+            if rr["ratio"] > cap:
+                fail("P12", f"R:R {rr['ratio']} implies risk < ~1x ATR (cap ~{round(cap,1)})")
     # P5 — exit below price
     if stop is not None and price is not None and stop >= price:
         fail("P5", f"exit {stop} >= price {price}")

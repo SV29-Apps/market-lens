@@ -5,6 +5,19 @@ Keep this in sync with `backend/plain_read.py` — if you change the code, updat
 
 ---
 
+## 2026-07-18 R:R RISK FLOOR + no-cache-on-chartless (the LICI pair)
+
+- **R:R risk floor (`_detail`, new `atr` param):** the displayed reward:risk is never
+  graded off a risk smaller than ~1×ATR — even on mixed/watch-line pages where the
+  ladder's exit is an unfloored swing low that can hug the price (LICI: ₹433 price,
+  ₹432 exit → "16.7 to 1 — good" was fiction; now graded off ≥1 daily swing).
+  Verdicts unaffected (R:R never feeds the tag). **Principle P12** asserts it.
+- **Half-failed reads are never cached (`app.read`):** the chart is fetched
+  best-effort; a transient failure used to pin a chartless page for the whole 15-min
+  bucket. A read without its chart now stays uncached and heals on the next tap.
+
+---
+
 ## 2026-07-18 GROUP HEALTH + VERIFIED DOTS (fidelity layer on top of the memory work)
 
 - **GROUP HEALTH check line (STEP 1 — SHOW ONLY, never changes a verdict).**

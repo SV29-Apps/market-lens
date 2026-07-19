@@ -342,7 +342,7 @@ def build_plain_read(bundle: dict, news: dict | None = None) -> dict:
         "action": action,
         "detail": _detail(currency, tag, over_extended, extended, vol_ratio, rs_rising,
                           ex_1m, ex_6m, pct_1d, price, eff_target, target_kind,
-                          buy_level, eff_stop,
+                          buy_level, eff_stop, atr=atr14,
                           live_vol=bool(_g(f, "daily", "volume", "live_adjusted")
                                         or _g(f, "daily", "volume", "session_adjusted"))),
         "supports": supports,
@@ -740,7 +740,8 @@ def _patterns(last_candle, recent_gaps, above50, strong_rs, regime, pct_1d, tag,
 
 
 def _detail(currency, tag, over_extended, extended, vol_ratio, rs_rising, ex_1m, ex_6m,
-            pct_1d, price, target_val, target_kind, buy_level, stop, live_vol=False):
+            pct_1d, price, target_val, target_kind, buy_level, stop, atr=None,
+            live_vol=False):
     """The read's inline detail: a target plus three plain 'setup' checks. Each check
     is THREE-STATE — good / watch / bad — not a pass/fail tick, because some factors
     (notably volume) are context-dependent, not simply good or bad.
@@ -823,10 +824,18 @@ def _detail(currency, tag, over_extended, extended, vol_ratio, rs_rising, ex_1m,
     entry = buy_level or (price if tag not in ("weak", "avoid") else None)
     if entry and stop and entry > stop:
         if target_val:
+            # RISK FLOOR (2026-07-18, the LICI ₹1-risk case): a "not a clear leader"
+            # page has no sized stop, so the ladder's exit falls back to the swing low —
+            # which can hug the price (₹433 price / ₹432 exit → "16.7 to 1 — good").
+            # Grade the reward against a risk of AT LEAST ~1 daily swing (same P8
+            # principle the buy setups enforce), whatever line the ladder displays.
+            risk = entry - stop
+            if atr and risk < atr:
+                risk = atr
             # threshold on the ROUNDED ratio the user actually sees: a raw 0.96 shows
             # as "1.0", and "1.0 — poor, you'd risk more than you could gain" reads
             # as a contradiction (audit finding, 2026-07-11).
-            ratio = round((target_val - entry) / (entry - stop), 1)
+            ratio = round((target_val - entry) / risk, 1)
             if ratio >= 2:
                 st, note = "good", "good — you could gain more than you'd risk"
             elif ratio >= 1:

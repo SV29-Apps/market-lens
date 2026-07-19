@@ -5,6 +5,20 @@ list whenever we defer something.
 
 ---
 
+## ✅ LICI PAIR: R:R RISK FLOOR + NO-CACHE-ON-CHARTLESS — 2026-07-18 (user-caught)
+
+User's LICI page had (a) NO chart and (b) "Exit ₹432" ₹1 under the ₹433 price with
+"Reward for the risk: 16.7 to 1 — good". Two real defects, both fixed (spec in
+READ_LOGIC.md top): the R:R grade now floors risk at ~1×ATR everywhere (the audit-#5
+class leaking through the mixed/watch-line path — P8 only covered buy setups; new
+**P12** + a mixed-hugging-swing-low scenario, 24 principles scenarios total), and a
+read whose best-effort chart fetch failed is no longer cached for the 15-min bucket
+(same never-cache-a-failure principle as audit M11/#8). Verified: P12 scenario 33:1→5.0,
+principles 24/24, frozen as-of 0 diffs (verdicts untouched — R:R never feeds the tag),
+LICI live: 130-point chart + "1.2 to 1 — modest", console clean.
+
+---
+
 ## ✅ SUGGESTION-PANEL RACE FIX — 2026-07-18 (user-caught bug; local only)
 
 Coming back from a read could show the type-ahead dropdown covering the market pills:

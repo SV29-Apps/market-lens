@@ -542,8 +542,12 @@ def read(ticker: str, market: str = ""):
         return JSONResponse({"ok": False,
                              "error": "Couldn't read that stock. Check the ticker and your "
                                       "internet, then try again."})
-    if out.get("ok"):        # never day-cache a failure — a throttled lookup would make a
-        _put(key, out)       # valid ticker "unreadable" for every user until midnight
+    # never cache a failure — a throttled lookup would make a valid ticker "unreadable"
+    # for every user until midnight. SAME principle for a HALF-failure (2026-07-18, LICI):
+    # the chart is fetched best-effort, so one Yahoo blip used to pin a chartless page
+    # for the whole 15-min bucket; now that read stays uncached and heals on the next tap.
+    if out.get("ok") and out.get("chart"):
+        _put(key, out)
     return out
 
 
